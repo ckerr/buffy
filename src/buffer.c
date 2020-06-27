@@ -9,161 +9,154 @@
 #include <libbuffy/buffer.h>
 
 #include <assert.h>
+#include <errno.h>
+#include <stdbool.h>
+#include <stdio.h>  // vsprintf()
 #include <string.h>  // memcpy()
 
-const struct bfy_buffer BfyBufferInit = {
-    .memory.data = NULL,
-    .memory.capacity = 0,
-    .allocator.resize = bfy_heap_resize,
-    .allocator.free = bfy_heap_free,
-    .length = 0
-};
-
-void bfy_buffer_construct(bfy_buffer* buf)
-{
-    *buf = BfyBufferInit;
+struct bfy_buffer
+bfy_buffer_init_with_block(bfy_block block) {
+    struct bfy_buffer buf = { 0 };
+    buf.block = block;
+    return buf;
 }
 
-void bfy_buffer_destruct(bfy_buffer* buf)
-{
-    buf->allocator.free(&buf->memory);
+struct bfy_buffer bfy_buffer_init(void) {
+    return bfy_buffer_init_with_block(bfy_block_init());
 }
 
-void bfy_buffer_reserve(bfy_buffer* buf, size_t n)
-{
-    buf->allocator.resize(&buf->memory, n);
+struct bfy_buffer
+bfy_buffer_init_unowned(void* data, size_t size) {
+    return bfy_buffer_init_with_block(bfy_block_init_unowned(data, size));
 }
 
-void bfy_buffer_reserve_available(bfy_buffer* buf, size_t n)
-{
-    size_t const available = buf->memory.capacity - buf->length;
-    if (available < n)
-    {
-        bfy_buffer_reserve(buf, buf->length + n);
-    }
+void
+bfy_buffer_clear(bfy_buffer* buf) {
+    buf->write_pos = 0;
 }
 
-void bfy_buffer_add(bfy_buffer* buf, void const* addme, size_t n)
-{
-    bfy_buffer_reserve_available(buf, n);
-    assert(buf->length + n <= buf->memory.capacity);
-    memcpy(bfy_buffer_end(buf), addme, n);
-    buf->length += n;
-    // fprintf(stderr, "[%*.*s] -> [%*.*s]\n", (int)n, (int)n, addme, (int)buf->length, (int)buf->length, buf->data);
-    assert(buf->length <= buf->memory.capacity);
+void
+bfy_buffer_destruct(bfy_buffer* buf) {
+    bfy_block_release(&buf->block);
 }
 
-void bfy_buffer_add_ch(bfy_buffer* buf, char ch)
-{
-    bfy_buffer_reserve_available(buf, 1);
-    ((char*)buf->memory.data)[buf->length++] = ch;
-}
-
-const void* bfy_buffer_cbegin(bfy_buffer const* buf)
-{
-    return buf->memory.data;
-}
-
-const void* bfy_buffer_cend(bfy_buffer const* buf)
-{
-    return bfy_buffer_cbegin(buf) + buf->length;
-}
-
-void* bfy_buffer_begin(bfy_buffer * buf)
-{
-    return buf->memory.data;
-}
-
-void* bfy_buffer_end(bfy_buffer* buf)
-{
-    return bfy_buffer_begin(buf) + buf->length;
-}
-
-char* bfy_buffer_destruct_to_string(bfy_buffer* buf, size_t* length)
-{
-    if (length != NULL)
-    {
-        *length = buf->length;
-    }
-
-    bfy_buffer_add_ch(buf, '\0');
-    void* const ret = buf->memory.data;
-    buf->length = 0;
-    buf->memory.capacity = 0;
-    buf->memory.data = NULL;
+bfy_block
+bfy_buffer_take(bfy_buffer* buf) {
+    bfy_block ret = buf->block;
+    *buf = bfy_buffer_init();
     return ret;
 }
 
-#if 0
+int
+bfy_buffer_take_string(bfy_buffer* buf, char** str, size_t* strsize) {
+    int ret = 0;
 
-    = NULL;
-
-void bfy_buffer_reset(bfy_buffer* buf)
-{
-    ibfy_free(buf->data);
-    *buf = TrBufferInit;
-}
-
-void bfy_buffer_reserve(bfy_buffer* buf, size_t n)
-{
-    if (buf->capacity < n)
-    {
-        size_t const MinCapacity = 64;
-        // size_t const old_capacity = buf->capacity;
-        size_t new_capacity = MAX(MinCapacity, buf->capacity);
-
-        while (new_capacity < n)
-        {
-            new_capacity *= 4u;
-        }
-
-        // fprintf(stderr, "realloc buf %p from %zu to %zu\n", buf, old_capacity, new_capacity);
-        buf->data = bfy_realloc(buf->data, new_capacity);
-        buf->capacity = new_capacity;
+    if (strsize != NULL) {
+        *strsize = bfy_buffer_get_length(buf);
     }
+
+    if ((bfy_buffer_get_available(buf) < 1) || *((char*)bfy_buffer_end(buf)) != '\0')
+    {
+        if (bfy_buffer_add_ch(buf, '\0'))
+        {
+            errno = ENOMEM;
+            ret = -1;
+        }
+    }
+
+    *str = bfy_buffer_begin(buf);
+    *buf = bfy_buffer_init();
+    return ret;
 }
 
-void bfy_buffer_reserve_available(bfy_buffer* buf, size_t n)
-{
-    bfy_buffer_reserve(buf, buf->length + n);
+
+size_t
+bfy_buffer_get_available(bfy_buffer const* buf) {
+    return bfy_buffer_get_capacity(buf) - bfy_buffer_get_length(buf);
+}
+size_t
+bfy_buffer_get_capacity(bfy_buffer const* buf) {
+    return buf->block.size;
+}
+size_t
+bfy_buffer_get_length(bfy_buffer const* buf) {
+    return buf->write_pos;
 }
 
-void bfy_buffer_add_ch(bfy_buffer* buf, char ch)
-{
-    bfy_buffer_reserve_available(buf, 1);
-    ((char*)buf->data)[buf->length++] = ch;
-    TR_ASSERT(buf->length <= buf->capacity);
-    // fprintf(stderr, "[%c] -> [%*.*s]\n", ch, (int)buf->length, (int)buf->length, buf->data);
+
+const void*
+bfy_buffer_cbegin(bfy_buffer const* buf) {
+    return buf->block.data;
 }
-void bfy_buffer_add_printf(bfy_buffer* buf, char const* fmt, ...)
-{
+const void*
+bfy_buffer_cend(bfy_buffer const* buf) {
+    return bfy_buffer_cbegin(buf) + bfy_buffer_get_length(buf);
+}
+
+
+void*
+bfy_buffer_begin(bfy_buffer * buf) {
+    return buf->block.data;
+}
+void*
+bfy_buffer_end(bfy_buffer* buf) {
+    return bfy_buffer_begin(buf) + bfy_buffer_get_length(buf);
+}
+
+
+int
+bfy_buffer_reserve(bfy_buffer* buf, size_t size) {
+    bool const have_enough = bfy_buffer_get_capacity(buf) >= size;
+    return have_enough ? 0 : bfy_block_resize(&buf->block, size);
+}
+
+int
+bfy_buffer_reserve_available(bfy_buffer* buf, size_t size) {
+    return bfy_buffer_reserve(buf, bfy_buffer_get_length(buf) + size);
+}
+
+int
+bfy_buffer_add(bfy_buffer* buf, void const* addme, size_t size) {
+    if (bfy_buffer_reserve_available(buf, size) == -1) {
+        return -1;
+    }
+
+    memcpy(bfy_buffer_end(buf), addme, size);
+    buf->write_pos += size;
+    assert(buf->write_pos <= bfy_buffer_get_capacity(buf));
+    return 0;
+}
+
+int
+bfy_buffer_add_ch(bfy_buffer* buf, char ch) {
+    return bfy_buffer_add(buf, &ch, 1);
+}
+
+int
+bfy_buffer_add_printf(bfy_buffer* buf, char const* fmt, ...) {
     va_list args;
     va_start(args, fmt);
-    bfy_buffer_add_vprintf(buf, fmt, args);
+    int const ret = bfy_buffer_add_vprintf(buf, fmt, args);
     va_end(args);
+    return ret;
 }
 
-void bfy_buffer_add_vprintf(bfy_buffer* buf, char const* fmt, va_list args_in)
-{
-    // make sure that at least some space is available...
-    bfy_buffer_reserve_available(buf, 64);
-
-    for(;;)
-    {
+int
+bfy_buffer_add_vprintf(bfy_buffer* buf, char const* fmt, va_list args_in) {
+    for(;;) {
         va_list args;
         va_copy(args, args_in);
-        int const available = buf->capacity - buf->length;
+        int const available = bfy_buffer_get_available(buf);
         int const n = vsnprintf(bfy_buffer_end(buf), available, fmt, args);
         va_end(args);
 
-        if (n < available)
-        {
-            buf->length += n;
-            break;
+        if (n < available) {
+            buf->write_pos += n;
+            return 0;
         }
 
-        bfy_buffer_reserve_available(buf, n+1); // +1 for trailing '\0'
+        if (bfy_buffer_reserve_available(buf, n+1) == -1) { // +1 for trailing '\0'
+            return -1;
+        }
     }
-    TR_ASSERT(buf->length < buf->capacity);
 }
-#endif

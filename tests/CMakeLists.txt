@@ -19,8 +19,5 @@ macro(package_add_test TESTNAME)
     set_target_properties(${TESTNAME} PROPERTIES FOLDER tests)
 endmacro()
 
-package_add_test(allocator-test
-                 allocator-test.cc)
-
 package_add_test(buffer-test
                  buffer-test.cc)

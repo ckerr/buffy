@@ -11,67 +11,55 @@
 #include <stddef.h>  // size_t
 #include <stdarg.h>  // va_list
 
-#include <libbuffy/allocator.h>
+#include <libbuffy/block.h>
 
 #ifdef __cplusplus
 extern "C" {
 #endif
 
 typedef struct bfy_buffer {
-    size_t length;
-    struct bfy_memory memory;
-    struct bfy_allocator allocator;
+    struct bfy_block block;
+    size_t write_pos;
 }
 bfy_buffer;
 
 extern const struct bfy_buffer BfyBufferInit;
 
-void  bfy_buffer_construct(bfy_buffer* buf);
-void  bfy_buffer_set_allocator(bfy_buffer* buf, bfy_allocator allocator);
-void  bfy_buffer_set_memory(bfy_buffer* buf, bfy_memory memory);
+struct bfy_buffer bfy_buffer_init(void);
+struct bfy_buffer bfy_buffer_init_unowned(void* data, size_t size);
+struct bfy_buffer bfy_buffer_init_with_block(bfy_block block);
 
-void  bfy_buffer_destruct(bfy_buffer* buf);
+int bfy_buffer_take_string(bfy_buffer* buf, char** str, size_t* strsize);
+void bfy_buffer_destruct(bfy_buffer* buf);
+void bfy_buffer_clear(bfy_buffer* buf);
+
+size_t bfy_buffer_get_available(bfy_buffer const* buf);
+size_t bfy_buffer_get_capacity(bfy_buffer const* buf);
+size_t bfy_buffer_get_length(bfy_buffer const* buf);
 
 void* bfy_buffer_begin(bfy_buffer* buf);
 void* bfy_buffer_end(bfy_buffer* buf);
-
 const void* bfy_buffer_cbegin(bfy_buffer const* buf);
 const void* bfy_buffer_cend(bfy_buffer const* buf);
 
-void  bfy_buffer_clear(bfy_buffer* buf);
+int bfy_buffer_reserve(bfy_buffer* buf, size_t size);
+int bfy_buffer_reserve_available(bfy_buffer* buf, size_t size);
 
-char* bfy_buffer_destruct_to_string(bfy_buffer* buf, size_t* length);
+int bfy_buffer_add(bfy_buffer* buf, void const* addme, size_t n);
+int bfy_buffer_add_ch(bfy_buffer* buf, char ch);
+int bfy_buffer_add_printf(bfy_buffer* buf, char const* fmt, ...);
+int bfy_buffer_add_vprintf(bfy_buffer* buf, char const* fmt, va_list args_in);
 
-void  bfy_buffer_reserve(bfy_buffer* buf, size_t n);
 
-void  bfy_buffer_reserve_available(bfy_buffer* buf, size_t n);
+// convenience wrapper for `bfy_buffer_reserve(buf, bfy_buffer_get_length(buf) + size)`
 
-void  bfy_buffer_add(bfy_buffer* buf, void const* addme, size_t n);
-
-void  bfy_buffer_add_ch(bfy_buffer* buf, char ch);
-
-void  bfy_buffer_add_printf(bfy_buffer* buf, char const* fmt, ...);
-
-void  bfy_buffer_add_vprintf(bfy_buffer* buf, char const* fmt, va_list args_in);
 
 #define BFY_HEAP_BUFFER(name) \
-    bfy_buffer name = { \
-        .memory.data = NULL, \
-        .memory.capacity = 0, \
-        .allocator.resize = bfy_heap_resize, \
-        .allocator.free = bfy_heap_free, \
-        .length = 0 \
-    };
+    bfy_buffer name = bfy_buffer_init();
 
 #define BFY_STACK_BUFFER(name, size) \
     char name##_stack[size]; \
-    bfy_buffer name = { \
-        .memory.data = name##_stack, \
-        .memory.capacity = size, \
-        .allocator.resize = bfy_stack_resize, \
-        .allocator.free = bfy_stack_free, \
-        .length = 0 \
-    };
+    bfy_buffer name = bfy_buffer_init_unowned(name##_stack, size);
 
 #ifdef __cplusplus
 }
