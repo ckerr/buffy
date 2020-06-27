@@ -8,7 +8,7 @@
 #ifndef INCLUDE_LIBBUFFY_BLOCK_H_
 #define INCLUDE_LIBBUFFY_BLOCK_H_
 
-#include <stddef.h>  // size_t, NULL
+#include <stddef.h>  // size_t
 
 #ifdef __cplusplus
 extern "C" {

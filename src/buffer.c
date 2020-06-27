@@ -55,10 +55,8 @@ bfy_buffer_take_string(bfy_buffer* buf, char** str, size_t* strsize) {
         *strsize = bfy_buffer_get_length(buf);
     }
 
-    if ((bfy_buffer_get_available(buf) < 1) || *((char*)bfy_buffer_end(buf)) != '\0')
-    {
-        if (bfy_buffer_add_ch(buf, '\0'))
-        {
+    if ((bfy_buffer_get_available(buf) < 1) || *((char*)bfy_buffer_end(buf)) != '\0') {
+        if (bfy_buffer_add_ch(buf, '\0')) {
             errno = ENOMEM;
             ret = -1;
         }

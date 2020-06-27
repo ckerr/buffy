@@ -50,10 +50,6 @@ int bfy_buffer_add_ch(bfy_buffer* buf, char ch);
 int bfy_buffer_add_printf(bfy_buffer* buf, char const* fmt, ...);
 int bfy_buffer_add_vprintf(bfy_buffer* buf, char const* fmt, va_list args_in);
 
-
-// convenience wrapper for `bfy_buffer_reserve(buf, bfy_buffer_get_length(buf) + size)`
-
-
 #define BFY_HEAP_BUFFER(name) \
     bfy_buffer name = bfy_buffer_init();
 
