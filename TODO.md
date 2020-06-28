@@ -19,18 +19,18 @@
 | 54         | evbuffer_add                   | bfy_buffer_add()          |
 | 44         | evbuffer_free                  | bfy_buffer_free()         |
 | 37         | evbuffer_new                   | bfy_buffer_new()          |
-| 37         | evbuffer_add_uint32            | |
+| 37         | evbuffer_add_uint32            | bfy_buffer_add_hton_32()  |
 | 31         | evbuffer_add_printf            | bfy_buffer_add_printf()   |
-| 26         | evbuffer_add_uint8             | |
+| 26         | evbuffer_add_uint8             | bfy_buffer_add_hton_8()   |
 | 19         | evbuffer_pullup                | |
 | 12         | evbuffer_free_to_str           | |
 | 11         | evbuffer_drain                 | |
-| 11         | evbuffer_add_hton_32           | |
+| 11         | evbuffer_add_hton_32           | bfy_buffer_add_hton_32()  |
 | 9          | evbuffer_remove                | |
 | 9          | evbuffer_read_ntoh_32          | |
 | 9          | evbuffer_add_buffer            | |
-| 7          | evbuffer_add_uint16            | |
-| 6          | evbuffer_add_hton_64           | |
+| 7          | evbuffer_add_uint16            | bfy_buffer_add_hton_16()  |
+| 6          | evbuffer_add_hton_64           | bfy_buffer_add_hton_64()  |
 | 5          | evbuffer_iovec                 | |
 | 4          | evbuffer_reserve_space         | |
 | 4          | evbuffer_commit_space          | |
@@ -39,14 +39,14 @@
 | 3          | evbuffer_expand                | |
 | 3          | evbuffer_copyout               | |
 | 3          | evbuffer_add_vprintf           | bfy_buffer_add_vprintf()  |
-| 3          | evbuffer_add_uint64            | |
+| 3          | evbuffer_add_uint64            | bfy_buffer_add_hton_64()  |
 | 3          | evbuffer_add_reference         | |
 | 2          | evbuffer_ref_cleanup_tr_free   | |
 | 2          | evbuffer_read_ntoh_64          | |
 | 2          | evbuffer_read                  | |
 | 2          | evbuffer_ptr_set               | |
 | 2          | evbuffer_ptr                   | |
-| 2          | evbuffer_add_hton_16           | |
+| 2          | evbuffer_add_hton_16           | bfy_buffer_add_hton_16()  |
 | 1          | evbuffer_write_atmost          | |
 | 1          | evbuffer_search                | |
 | 1          | evbuffer_peek                  | |
