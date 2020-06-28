@@ -4,6 +4,23 @@
 
 #include "gtest/gtest.h"
 
+TEST(Buffer, new_and_free) {
+    struct bfy_buffer* buf = bfy_buffer_new();
+    EXPECT_NE(nullptr, buf);
+    EXPECT_EQ(0, bfy_buffer_get_available(buf));
+    EXPECT_EQ(0, bfy_buffer_get_capacity(buf));
+    EXPECT_EQ(0, bfy_buffer_get_length(buf));
+    bfy_buffer_free(buf);
+}
+
+TEST(Buffer, init_and_destruct) {
+    struct bfy_buffer buf = bfy_buffer_init();
+    EXPECT_EQ(0, bfy_buffer_get_available(&buf));
+    EXPECT_EQ(0, bfy_buffer_get_capacity(&buf));
+    EXPECT_EQ(0, bfy_buffer_get_length(&buf));
+    bfy_buffer_destruct(&buf);
+}
+
 TEST(Buffer, add) {
     BFY_HEAP_BUFFER(buf);
 

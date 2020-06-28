@@ -18,8 +18,6 @@ typedef struct bfy_block
 {
     void* data;
     size_t size;
-    void* impl_data;
-    void* user_data;
     int (*realloc)(struct bfy_block*, size_t n);
 }
 bfy_block;

@@ -13,6 +13,9 @@
 #include <stdbool.h>
 #include <stdio.h>  // vsprintf()
 #include <string.h>  // memcpy()
+#include <stdlib.h>  // malloc(), free()
+
+/// Life cycle -- bfy_buffer owned by caller
 
 struct bfy_buffer
 bfy_buffer_init_with_block(bfy_block block) {
@@ -31,13 +34,40 @@ bfy_buffer_init_unowned(void* data, size_t size) {
 }
 
 void
-bfy_buffer_clear(bfy_buffer* buf) {
-    buf->write_pos = 0;
+bfy_buffer_destruct(bfy_buffer* buf) {
+    bfy_block_release(&buf->block);
+}
+
+/// Life cycle -- bfy_buffer is heap-allocated
+
+struct bfy_buffer*
+bfy_buffer_new_with_block(bfy_block block) {
+    struct bfy_buffer* buf = malloc(sizeof(struct bfy_buffer));
+    *buf = bfy_buffer_init_with_block(block);
+    return buf;
+}
+
+struct bfy_buffer*
+bfy_buffer_new(void) {
+    return bfy_buffer_new_with_block(bfy_block_init());
+}
+
+struct bfy_buffer*
+bfy_buffer_new_unowned(void* data, size_t size) {
+    return bfy_buffer_new_with_block(bfy_block_init_unowned(data, size));
 }
 
 void
-bfy_buffer_destruct(bfy_buffer* buf) {
-    bfy_block_release(&buf->block);
+bfy_buffer_free(bfy_buffer* buf) {
+    bfy_buffer_destruct(buf);
+    free(buf);
+}
+
+///
+
+void
+bfy_buffer_clear(bfy_buffer* buf) {
+    buf->write_pos = 0;
 }
 
 bfy_block

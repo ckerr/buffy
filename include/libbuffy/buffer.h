@@ -25,12 +25,17 @@ bfy_buffer;
 
 extern const struct bfy_buffer BfyBufferInit;
 
+struct bfy_buffer* bfy_buffer_new(void);
+struct bfy_buffer* bfy_buffer_new_unowned(void* data, size_t size);
+struct bfy_buffer* bfy_buffer_new_with_block(bfy_block block);
+void bfy_buffer_free(bfy_buffer*);
+
 struct bfy_buffer bfy_buffer_init(void);
 struct bfy_buffer bfy_buffer_init_unowned(void* data, size_t size);
 struct bfy_buffer bfy_buffer_init_with_block(bfy_block block);
+void bfy_buffer_destruct(bfy_buffer* buf);
 
 int bfy_buffer_take_string(bfy_buffer* buf, char** str, size_t* strsize);
-void bfy_buffer_destruct(bfy_buffer* buf);
 void bfy_buffer_clear(bfy_buffer* buf);
 
 size_t bfy_buffer_get_available(bfy_buffer const* buf);
