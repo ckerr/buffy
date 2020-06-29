@@ -82,10 +82,10 @@ bfy_buffer_take_string(bfy_buffer* buf, char** str, size_t* strsize) {
     int ret = 0;
 
     if (strsize != NULL) {
-        *strsize = bfy_buffer_get_length(buf);
+        *strsize = bfy_buffer_get_readable_size(buf);
     }
 
-    if ((bfy_buffer_get_available(buf) < 1) || *((char*)bfy_buffer_end(buf)) != '\0') {
+    if ((bfy_buffer_get_writable_size(buf) < 1) || *((char*)bfy_buffer_end(buf)) != '\0') {
         if (bfy_buffer_add_ch(buf, '\0')) {
             errno = ENOMEM;
             ret = -1;
@@ -99,15 +99,11 @@ bfy_buffer_take_string(bfy_buffer* buf, char** str, size_t* strsize) {
 
 
 size_t
-bfy_buffer_get_available(bfy_buffer const* buf) {
-    return bfy_buffer_get_capacity(buf) - bfy_buffer_get_length(buf);
+bfy_buffer_get_writable_size(bfy_buffer const* buf) {
+    return buf->block.size - bfy_buffer_get_readable_size(buf);
 }
 size_t
-bfy_buffer_get_capacity(bfy_buffer const* buf) {
-    return buf->block.size;
-}
-size_t
-bfy_buffer_get_length(bfy_buffer const* buf) {
+bfy_buffer_get_readable_size(bfy_buffer const* buf) {
     return buf->write_pos;
 }
 
@@ -118,7 +114,7 @@ bfy_buffer_cbegin(bfy_buffer const* buf) {
 }
 const void*
 bfy_buffer_cend(bfy_buffer const* buf) {
-    return bfy_buffer_cbegin(buf) + bfy_buffer_get_length(buf);
+    return bfy_buffer_cbegin(buf) + bfy_buffer_get_readable_size(buf);
 }
 
 
@@ -128,19 +124,19 @@ bfy_buffer_begin(bfy_buffer * buf) {
 }
 void*
 bfy_buffer_end(bfy_buffer* buf) {
-    return bfy_buffer_begin(buf) + bfy_buffer_get_length(buf);
+    return bfy_buffer_begin(buf) + bfy_buffer_get_readable_size(buf);
 }
 
 
 int
 bfy_buffer_reserve(bfy_buffer* buf, size_t size) {
-    bool const have_enough = bfy_buffer_get_capacity(buf) >= size;
+    bool const have_enough = buf->block.size >= size;
     return have_enough ? 0 : bfy_block_resize(&buf->block, size);
 }
 
 int
 bfy_buffer_reserve_available(bfy_buffer* buf, size_t size) {
-    return bfy_buffer_reserve(buf, bfy_buffer_get_length(buf) + size);
+    return bfy_buffer_reserve(buf, bfy_buffer_get_readable_size(buf) + size);
 }
 
 int
@@ -151,7 +147,7 @@ bfy_buffer_add(bfy_buffer* buf, void const* addme, size_t size) {
 
     memcpy(bfy_buffer_end(buf), addme, size);
     buf->write_pos += size;
-    assert(buf->write_pos <= bfy_buffer_get_capacity(buf));
+    assert(buf->write_pos <= buf->block.size);
     return 0;
 }
 
@@ -174,7 +170,7 @@ bfy_buffer_add_vprintf(bfy_buffer* buf, char const* fmt, va_list args_in) {
     for(;;) {
         va_list args;
         va_copy(args, args_in);
-        int const available = bfy_buffer_get_available(buf);
+        int const available = bfy_buffer_get_writable_size(buf);
         int const n = vsnprintf(bfy_buffer_end(buf), available, fmt, args);
         va_end(args);
 

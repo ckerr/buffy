@@ -29,7 +29,6 @@ bfy_heap_realloc(struct bfy_block* block, size_t requested)
         new_size *= 2u;
     }
 
-    fprintf(stderr, "realloc block %p data %p %zu\n", block, block->data, new_size);
     void* new_data = realloc(block->data, new_size);
     if (new_data == NULL) {
         errno = ENOMEM;

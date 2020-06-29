@@ -38,9 +38,8 @@ void bfy_buffer_destruct(bfy_buffer* buf);
 int bfy_buffer_take_string(bfy_buffer* buf, char** str, size_t* strsize);
 void bfy_buffer_clear(bfy_buffer* buf);
 
-size_t bfy_buffer_get_available(bfy_buffer const* buf);
-size_t bfy_buffer_get_capacity(bfy_buffer const* buf);
-size_t bfy_buffer_get_length(bfy_buffer const* buf);
+size_t bfy_buffer_get_writable_size(bfy_buffer const* buf);
+size_t bfy_buffer_get_readable_size(bfy_buffer const* buf);
 
 void* bfy_buffer_begin(bfy_buffer* buf);
 void* bfy_buffer_end(bfy_buffer* buf);
