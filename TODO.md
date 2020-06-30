@@ -7,6 +7,7 @@
 - [ ] Learn how to create a GitHub Action that runs `make` + `make test` on PR
 - [ ] Code coverage
 - [ ] Add clang-tidy support
+- [ ] Add API documentation in header
 
 ## Missing Functionality
 
