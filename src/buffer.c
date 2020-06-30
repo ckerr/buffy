@@ -120,8 +120,8 @@ block_realloc(struct bfy_block* block, size_t requested) {
 
     // maybe free the memory
     if (requested == 0) {
-        fprintf(stderr, "free block %p data %p\n", block, block->data);
         if (block->data != NULL) {
+            fprintf(stderr, "free block %p data %p\n", block, block->data);
             free(block->data);
             block->data = NULL;
         }
