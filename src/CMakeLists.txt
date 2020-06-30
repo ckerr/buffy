@@ -1,5 +1,4 @@
 set(SOURCES
-    block.c
     buffer.c
     buffer-endian.c
 )

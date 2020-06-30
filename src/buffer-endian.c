@@ -10,6 +10,7 @@
 
 #include "portable-endian.h"
 
+#if 0
 int
 bfy_buffer_add_hton_8(struct bfy_buffer* buf, uint8_t addme) {
     return bfy_buffer_add(buf, &addme, 1);
@@ -32,4 +33,5 @@ bfy_buffer_add_hton_64(struct bfy_buffer* buf, uint64_t addme) {
     uint64_t const be = htobe64(addme);
     return bfy_buffer_add(buf, &be, sizeof(be));
 }
+#endif
 
