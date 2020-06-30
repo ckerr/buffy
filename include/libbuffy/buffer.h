@@ -75,6 +75,7 @@ void* bfy_buffer_make_all_contiguous(bfy_buffer* buf);
 
 char* bfy_buffer_remove_string(bfy_buffer* buf, size_t* len);
 size_t bfy_buffer_remove(bfy_buffer* buf, void* data, size_t n_wanted);
+size_t bfy_buffer_copyout(bfy_buffer const* buf, void* vdata, size_t n_wanted);
 
 #if 0
 int bfy_buffer_take_string(bfy_buffer* buf, char** str, size_t* strsize);

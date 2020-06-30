@@ -26,6 +26,7 @@
 #include <cerrno>
 #include <numeric>
 #include <string_view>
+#include <cstring>  // memcmp()
 
 #include "libbuffy/buffer.h"
 
@@ -585,6 +586,91 @@ TEST(Buffer, remove_string_with_empty_buf) {
     bfy_buffer_destruct(&buf);
 }
 
+TEST(Buffer, copyout_some) {
+    bfy_buffer buf = bfy_buffer_init();
+    std::string expected_out;
+    for (auto const& str : strs) {
+        bfy_buffer_add_readonly(&buf, std::data(str), std::size(str));
+        expected_out += str;
+    }
+    auto const n_readable = bfy_buffer_get_readable_size(&buf);
+    auto const n_writable = bfy_buffer_get_writable_size(&buf);
+    auto const n_blocks = bfy_buffer_peek_all(&buf, nullptr, 0);
+
+    // copy out some of it
+    auto array = std::array<char, 64>{};
+    auto constexpr n_expected = std::size(str1) + 1;
+    auto const n_got = bfy_buffer_copyout(&buf, std::data(array), n_expected);
+
+    // confirm we got what we expected
+    EXPECT_EQ(n_expected, n_got);
+    EXPECT_FALSE(memcmp(std::data(expected_out.substr(0, n_got)), std::data(array), n_expected));
+
+    // confirm that buffer is unchanged
+    EXPECT_EQ(n_readable, bfy_buffer_get_readable_size(&buf));
+    EXPECT_EQ(n_writable, bfy_buffer_get_writable_size(&buf));
+    EXPECT_EQ(n_blocks, bfy_buffer_peek_all(&buf, nullptr, 0));
+
+    // cleanup
+    bfy_buffer_destruct(&buf);
+}
+
+TEST(Buffer, copyout_all) {
+    bfy_buffer buf = bfy_buffer_init();
+    std::string expected_out;
+    for (auto const& str : strs) {
+        bfy_buffer_add_readonly(&buf, std::data(str), std::size(str));
+        expected_out += str;
+    }
+    auto const n_readable = bfy_buffer_get_readable_size(&buf);
+    auto const n_writable = bfy_buffer_get_writable_size(&buf);
+    auto const n_blocks = bfy_buffer_peek_all(&buf, nullptr, 0);
+
+    // copy out some of it
+    auto array = std::array<char, 64>{};
+    auto const n_expected = std::size(expected_out);
+    auto const n_got = bfy_buffer_copyout(&buf, std::data(array), SIZE_MAX);
+
+    // confirm we got what we expected
+    EXPECT_EQ(n_expected, n_got);
+    EXPECT_FALSE(memcmp(std::data(expected_out), std::data(array), n_got));
+
+    // confirm that buffer is unchanged
+    EXPECT_EQ(n_readable, bfy_buffer_get_readable_size(&buf));
+    EXPECT_EQ(n_writable, bfy_buffer_get_writable_size(&buf));
+    EXPECT_EQ(n_blocks, bfy_buffer_peek_all(&buf, nullptr, 0));
+
+    // cleanup
+    bfy_buffer_destruct(&buf);
+}
+
+TEST(Buffer, copyout_none) {
+    bfy_buffer buf = bfy_buffer_init();
+    std::string expected_out;
+    for (auto const& str : strs) {
+        bfy_buffer_add_readonly(&buf, std::data(str), std::size(str));
+        expected_out += str;
+    }
+    auto const n_readable = bfy_buffer_get_readable_size(&buf);
+    auto const n_writable = bfy_buffer_get_writable_size(&buf);
+    auto const n_blocks = bfy_buffer_peek_all(&buf, nullptr, 0);
+
+    // copy out some of it
+    auto array = std::array<char, 64>{};
+    auto constexpr n_expected = 0;
+    auto const n_got = bfy_buffer_copyout(&buf, std::data(array), n_expected);
+
+    // confirm we got what we expected
+    EXPECT_EQ(n_expected, n_got);
+
+    // confirm that buffer is unchanged
+    EXPECT_EQ(n_readable, bfy_buffer_get_readable_size(&buf));
+    EXPECT_EQ(n_writable, bfy_buffer_get_writable_size(&buf));
+    EXPECT_EQ(n_blocks, bfy_buffer_peek_all(&buf, nullptr, 0));
+
+    // cleanup
+    bfy_buffer_destruct(&buf);
+}
 
 #if 0
 TEST(Buffer, clear) {

@@ -425,39 +425,28 @@ bfy_buffer_drain(bfy_buffer* buf, size_t len) {
 
 ///
 
-#if 0
 static size_t
-bfy_buffer_copyout(bfy_buffer* buf, void* tgt, size_t len) {
-    size_t n_left = limit_readable_size(buf, len);
-
-    int const n_vecs = bfy_buffer_peek(buf, n_left, NULL, 0);
-    struct bfy_iovec* vecs = calloc(n_vecs, sizeof(struct bfy_iovec));
-    bfy_buffer_peek(buf, n_left, vecs, n_vecs);
-
-    char* tgt_it = tgt;
-    char* tgt_end = tgt_it + n_left;
-    struct bfy_iovec* iov_it = vecs;
-    struct bfy_iovec* iov_end = iov_it + n_vecs;
-
-    while(iov_it != iov_end) {
-        memcpy(tgt_it, iov_it->iov_base, iov_it->iov_len);
-        tgt_it += iov_it->iov_len;
-        ++iov_it;
-    }
-
-    assert(tgt_it == tgt_end);
-    assert(iov_it == iov_end);
-
-    free(vecs);
-    return tgt_it - (char*)tgt;
-}
-#endif
-
-static size_t
-block_copyout(struct bfy_block* block, void* data, size_t n_wanted) {
+block_copyout(struct bfy_block const* block, void* data, size_t n_wanted) {
     size_t const n_copied = size_t_min(n_wanted, block_get_readable_size(block));
     memcpy(data, block_read_cbegin(block), n_copied);
     return n_copied;
+}
+
+size_t
+bfy_buffer_copyout(bfy_buffer const* buf, void* vdata, size_t n_wanted) {
+    int8_t* data = vdata;
+    size_t n_left = n_wanted;
+    struct bfy_block const* const begin = blocks_cbegin(buf);
+    struct bfy_block const* const end = blocks_cend(buf);
+    for (struct bfy_block const* it = begin; it != end; ++it) {
+        size_t const n_this_block = block_copyout(it, data, n_left);
+        if (n_this_block == 0) {
+            break;
+        }
+        data += n_this_block;
+        n_left -= n_this_block;
+    }
+    return data - (int8_t*)vdata;
 }
 
 static size_t
