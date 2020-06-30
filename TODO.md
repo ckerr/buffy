@@ -1,9 +1,6 @@
 ## Housekeeping
 
 - [ ] Add a README.md
-- [ ] Add a .gitignore
-- [ ] Add a LICENSE.md
-- [ ] Create a GitHub repo
 - [ ] Learn how to create a GitHub Action that runs `make` + `make test` on PR
 - [ ] Code coverage
 - [ ] Add clang-tidy support
@@ -12,7 +9,6 @@
 ## Missing Functionality
 
 ### Features Used by Transmission
-
 
 | Times Used | Current Use                    | Buffy Equivalent             |
 |-----------:|:-------------------------------|------------------------------|
