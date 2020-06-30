@@ -86,11 +86,11 @@ TEST(Buffer, peek) {
     rv = bfy_buffer_add_readonly(&buf, std::data(pt2), std::size(pt2));
     EXPECT_TRUE(rv);
 
-    EXPECT_EQ(1, bfy_buffer_peek(&buf, std::size(pt1), NULL, 0));
-    EXPECT_EQ(2, bfy_buffer_peek(&buf, std::size(pt1)+1, NULL, 0));
-    EXPECT_EQ(2, bfy_buffer_peek(&buf, std::size(pt1)+std::size(pt2), NULL, 0));
-    EXPECT_EQ(2, bfy_buffer_peek(&buf, std::size(pt1)+std::size(pt2)+1, NULL, 0));
-    EXPECT_EQ(2, bfy_buffer_peek_all(&buf, NULL, 0));
+    EXPECT_EQ(1, bfy_buffer_peek(&buf, std::size(pt1), nullptr, 0));
+    EXPECT_EQ(2, bfy_buffer_peek(&buf, std::size(pt1)+1, nullptr, 0));
+    EXPECT_EQ(2, bfy_buffer_peek(&buf, std::size(pt1)+std::size(pt2), nullptr, 0));
+    EXPECT_EQ(2, bfy_buffer_peek(&buf, std::size(pt1)+std::size(pt2)+1, nullptr, 0));
+    EXPECT_EQ(2, bfy_buffer_peek_all(&buf, nullptr, 0));
 
     const bfy_iovec JunkVec = {
        .iov_base = reinterpret_cast<void*>(0xBADF00D),
@@ -107,7 +107,7 @@ TEST(Buffer, peek) {
     EXPECT_EQ(JunkVec, vecs[1]);
 
     // test that a single-vec peek with a null iovec works
-    rv = bfy_buffer_peek(&buf, std::size(pt1), NULL, 0);
+    rv = bfy_buffer_peek(&buf, std::size(pt1), nullptr, 0);
     EXPECT_EQ(1, rv);
 
     // test that a multivec peek works
@@ -121,7 +121,7 @@ TEST(Buffer, peek) {
     EXPECT_EQ(JunkVec, vecs[2]);
 
     // test that a multivec peek with a null iovec works
-    rv = bfy_buffer_peek(&buf, std::size(pt1), NULL, 0);
+    rv = bfy_buffer_peek(&buf, std::size(pt1), nullptr, 0);
     EXPECT_TRUE(rv);
 
     // test that the number extents needed is returned
@@ -143,7 +143,7 @@ TEST(Buffer, add) {
     auto const rv = bfy_buffer_add_ch(&buf, ch);
     EXPECT_TRUE(rv);
     EXPECT_EQ(1, bfy_buffer_get_readable_size(&buf));
-    EXPECT_EQ(1, bfy_buffer_peek_all(&buf, NULL, 0));
+    EXPECT_EQ(1, bfy_buffer_peek_all(&buf, nullptr, 0));
 
     bfy_buffer_destruct(&buf);
 }
@@ -189,7 +189,7 @@ TEST(Buffer, add_printf) {
     // printf into the buffer
     auto const rv = bfy_buffer_add_printf(&buf, "%s, %s!", "Hello", "World");
     EXPECT_TRUE(rv);
-    EXPECT_EQ(1, bfy_buffer_peek_all(&buf, NULL, 0));
+    EXPECT_EQ(1, bfy_buffer_peek_all(&buf, nullptr, 0));
 
     // confirm that the string was written into the memory used by the buffer
     auto constexpr expected = std::string_view { "Hello, World!" };
@@ -249,7 +249,7 @@ TEST(Buffer, make_contiguous_when_small_request) {
     auto const n_readable = bfy_buffer_get_readable_size(&buf);
     auto const acc = [](auto& acc, auto const& str){return acc + std::size(str);};
     auto const n_readable_expected = std::accumulate(begin, end, size_t{}, acc);
-    EXPECT_EQ(n_blocks_in, bfy_buffer_peek_all(&buf, NULL, 0));
+    EXPECT_EQ(n_blocks_in, bfy_buffer_peek_all(&buf, nullptr, 0));
     EXPECT_EQ(n_readable_expected, n_readable);
 
     // confirm that nothing happens when you request a block
@@ -258,7 +258,7 @@ TEST(Buffer, make_contiguous_when_small_request) {
     for (int i=0; i < n_contiguous; ++i) {
         auto const* rv = bfy_buffer_make_contiguous(&buf, n_contiguous);
         EXPECT_EQ(rv, std::data(strs.front()));
-        EXPECT_EQ(n_blocks_in, bfy_buffer_peek_all(&buf, NULL, 0));
+        EXPECT_EQ(n_blocks_in, bfy_buffer_peek_all(&buf, nullptr, 0));
         EXPECT_EQ(n_readable_expected, bfy_buffer_get_readable_size(&buf));
     }
 
@@ -277,11 +277,11 @@ TEST(Buffer, make_contiguous_when_readonly_blocks) {
     auto const n_readable = bfy_buffer_get_readable_size(&buf);
     auto const n_readable_expected = std::accumulate(begin, end, size_t{}, [](auto& acc, auto const& str){return acc + std::size(str);});
     EXPECT_EQ(n_readable_expected, n_readable);
-    EXPECT_EQ(n_blocks_in, bfy_buffer_peek_all(&buf, NULL, 0));
+    EXPECT_EQ(n_blocks_in, bfy_buffer_peek_all(&buf, nullptr, 0));
 
     // confirm that make_contiguous put 'em in one block
     auto const* rv = bfy_buffer_make_all_contiguous(&buf);
-    EXPECT_EQ(1, bfy_buffer_peek_all(&buf, NULL, 0));
+    EXPECT_EQ(1, bfy_buffer_peek_all(&buf, nullptr, 0));
     EXPECT_EQ(n_readable_expected, bfy_buffer_get_readable_size(&buf));
     std::for_each(begin, end, [this, rv](auto const& str){ EXPECT_NE(std::data(str), rv); });
 
@@ -301,7 +301,7 @@ TEST(Buffer, make_contiguous_when_aligned_with_block) {
     auto const acc = [](auto& acc, auto const& str){return acc + std::size(str);};
     auto const n_readable_expected = std::accumulate(begin, end, size_t{}, acc);
     EXPECT_EQ(n_readable_expected, n_readable);
-    EXPECT_EQ(n_blocks_in, bfy_buffer_peek_all(&buf, NULL, 0));
+    EXPECT_EQ(n_blocks_in, bfy_buffer_peek_all(&buf, nullptr, 0));
 
     // try to make the first two blocks contiguous
     auto constexpr n_blocks_contiguous = n_blocks_in - 1;
@@ -332,7 +332,7 @@ TEST(Buffer, make_contiguous_when_not_aligned_with_block) {
     auto const acc = [](auto& acc, auto const& str){return acc + std::size(str);};
     auto const n_readable_expected = std::accumulate(begin, end, size_t{}, acc);
     EXPECT_EQ(n_readable_expected, n_readable);
-    EXPECT_EQ(n_blocks_in, bfy_buffer_peek_all(&buf, NULL, 0));
+    EXPECT_EQ(n_blocks_in, bfy_buffer_peek_all(&buf, nullptr, 0));
 
     // try to make 2-and-some blocks contiguous
     auto const n_contiguous = n_readable_expected - 1;
@@ -394,7 +394,127 @@ TEST(Buffer, ensure_writable_when_readonly) {
     bfy_buffer_destruct(&buf);
 }
 
+TEST(Buffer, drain_on_block_boundary) {
+    // setup: build a buffer with two blocks
+    bfy_buffer buf = bfy_buffer_init();
+    bfy_buffer_add_readonly(&buf, std::data(str1), std::size(str1));
+    bfy_buffer_add_readonly(&buf, std::data(str2), std::size(str2));
+    EXPECT_EQ(2, bfy_buffer_peek_all(&buf, nullptr, 0));
+    EXPECT_EQ(0, bfy_buffer_get_writable_size(&buf));
+    EXPECT_EQ(std::size(str1) + std::size(str2), bfy_buffer_get_readable_size(&buf));
 
+    // drain the first block -- the second one should remain
+    EXPECT_TRUE(bfy_buffer_drain(&buf, std::size(str1)));
+    auto constexpr n_expected_vecs = 1;
+    auto vecs = std::array<bfy_iovec, n_expected_vecs>{};
+    EXPECT_EQ(n_expected_vecs, bfy_buffer_peek_all(&buf, std::data(vecs), std::size(vecs)));
+    EXPECT_EQ(std::data(str2), vecs.front().iov_base);
+    EXPECT_EQ(std::size(str2), vecs.front().iov_len);
+    EXPECT_EQ(0, bfy_buffer_get_writable_size(&buf));
+    EXPECT_EQ(std::size(str2), bfy_buffer_get_readable_size(&buf));
+
+    bfy_buffer_destruct(&buf);
+}
+
+TEST(Buffer, drain_part_of_first_block) {
+    // setup: build a buffer with two blocks
+    bfy_buffer buf = bfy_buffer_init();
+    bfy_buffer_add_readonly(&buf, std::data(str1), std::size(str1));
+    bfy_buffer_add_readonly(&buf, std::data(str2), std::size(str2));
+    EXPECT_EQ(2, bfy_buffer_peek_all(&buf, nullptr, 0));
+    auto expected_readable_size = std::size(str1) + std::size(str2);
+    auto constexpr expected_writable_size = 0;
+    EXPECT_EQ(expected_readable_size, bfy_buffer_get_readable_size(&buf));
+    EXPECT_EQ(expected_writable_size, bfy_buffer_get_writable_size(&buf));
+
+    // drain _part_ of the first block
+    auto constexpr n_drain = std::size(str1) / 2;
+    EXPECT_TRUE(bfy_buffer_drain(&buf, n_drain));
+    expected_readable_size -= n_drain;
+
+    // part of the first block and all of the last block should remain
+    auto constexpr n_expected_vecs = 2;
+    auto vecs = std::array<bfy_iovec, n_expected_vecs>{};
+    EXPECT_EQ(n_expected_vecs, bfy_buffer_peek_all(&buf, std::data(vecs), std::size(vecs)));
+    EXPECT_EQ(std::data(str1) + n_drain, vecs.front().iov_base);
+    EXPECT_EQ(std::size(str1) - n_drain, vecs.front().iov_len);
+    EXPECT_EQ(std::data(str2), vecs.back().iov_base);
+    EXPECT_EQ(std::size(str2), vecs.back().iov_len);
+    EXPECT_EQ(expected_readable_size, bfy_buffer_get_readable_size(&buf));
+    EXPECT_EQ(expected_writable_size, bfy_buffer_get_writable_size(&buf));
+
+    bfy_buffer_destruct(&buf);
+}
+
+TEST(Buffer, drain_zero) {
+    // setup: build a buffer with two blocks
+    bfy_buffer buf = bfy_buffer_init();
+    bfy_buffer_add_readonly(&buf, std::data(str1), std::size(str1));
+    bfy_buffer_add_readonly(&buf, std::data(str2), std::size(str2));
+    auto constexpr n_expected_vecs = 2;
+    auto vecs_pre = std::array<bfy_iovec, n_expected_vecs>{};
+    EXPECT_EQ(n_expected_vecs, bfy_buffer_peek_all(&buf, std::data(vecs_pre), std::size(vecs_pre)));
+    auto constexpr n_expected_readable = std::size(str1) + std::size(str2);
+    auto constexpr n_expected_writable = 0;
+    EXPECT_EQ(n_expected_readable, bfy_buffer_get_readable_size(&buf));
+    EXPECT_EQ(n_expected_writable, bfy_buffer_get_writable_size(&buf));
+
+    // remove nothing
+    EXPECT_TRUE(bfy_buffer_drain(&buf, 0));
+
+    // confirm that nothing changed
+    auto vecs_post = std::array<bfy_iovec, n_expected_vecs>{};
+    EXPECT_EQ(n_expected_vecs, bfy_buffer_peek_all(&buf, std::data(vecs_post), std::size(vecs_post)));
+    EXPECT_EQ(vecs_pre, vecs_post);
+    EXPECT_EQ(n_expected_readable, bfy_buffer_get_readable_size(&buf));
+    EXPECT_EQ(n_expected_writable, bfy_buffer_get_writable_size(&buf));
+
+    // cleanup
+    bfy_buffer_destruct(&buf);
+}
+
+TEST(Buffer, drain_empty_buffer) {
+    // setup: build an empty buffer
+    bfy_buffer buf = bfy_buffer_init();
+    EXPECT_EQ(0, bfy_buffer_peek_all(&buf, nullptr, 0));
+    EXPECT_EQ(0, bfy_buffer_get_readable_size(&buf));
+    EXPECT_EQ(0, bfy_buffer_get_writable_size(&buf));
+
+    // drain something
+    EXPECT_TRUE(bfy_buffer_drain(&buf, bfy_buffer_drain(&buf, 128)));
+
+    // confirm that nothing changed
+    EXPECT_EQ(0, bfy_buffer_peek_all(&buf, nullptr, 0));
+    EXPECT_EQ(0, bfy_buffer_get_readable_size(&buf));
+    EXPECT_EQ(0, bfy_buffer_get_writable_size(&buf));
+
+    // cleanup
+    bfy_buffer_destruct(&buf);
+}
+TEST(Buffer, drain_too_much) {
+    // setup: build a buffer with two blocks
+    bfy_buffer buf = bfy_buffer_init();
+    bfy_buffer_add_readonly(&buf, std::data(str1), std::size(str1));
+    bfy_buffer_add_readonly(&buf, std::data(str2), std::size(str2));
+    auto constexpr n_expected_vecs = 2;
+    auto vecs_pre = std::array<bfy_iovec, n_expected_vecs>{};
+    EXPECT_EQ(n_expected_vecs, bfy_buffer_peek_all(&buf, std::data(vecs_pre), std::size(vecs_pre)));
+    auto constexpr n_expected_readable = std::size(str1) + std::size(str2);
+    auto constexpr n_expected_writable = 0;
+    EXPECT_EQ(n_expected_readable, bfy_buffer_get_readable_size(&buf));
+    EXPECT_EQ(n_expected_writable, bfy_buffer_get_writable_size(&buf));
+
+    // drain more than the buffer holds
+    EXPECT_TRUE(bfy_buffer_drain(&buf, n_expected_readable * 2));
+
+    // confirm that the buffer is empty
+    EXPECT_EQ(0, bfy_buffer_peek_all(&buf, nullptr, 0));
+    EXPECT_EQ(0, bfy_buffer_get_readable_size(&buf));
+    EXPECT_EQ(0, bfy_buffer_get_writable_size(&buf));
+
+    // cleanup
+    bfy_buffer_destruct(&buf);
+}
 
 #if 0
 TEST(Buffer, clear) {
@@ -472,7 +592,7 @@ TEST(Buffer, add_too_much) {
     EXPECT_TRUE(!memcmp("1234", bfy_buffer_begin(&buf), Limit));
 
     errno = 0;
-    char* out = NULL;
+    char* out = nullptr;
     size_t outlen = 0;
     rv = bfy_buffer_take_string(&buf, &out, &outlen);
     EXPECT_EQ(-1, rv);

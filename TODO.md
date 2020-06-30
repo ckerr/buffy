@@ -24,7 +24,7 @@
 | 26         | evbuffer_add_uint8             | bfy_buffer_add_hton_8()      |
 | 19         | evbuffer_pullup                | bfy_buffer_make_contiguous() |
 | 12         | evbuffer_free_to_str           | |
-| 11         | evbuffer_drain                 | |
+| 11         | evbuffer_drain                 | bfy_buffer_drain()           |
 | 11         | evbuffer_add_hton_32           | bfy_buffer_add_hton_32()     |
 | 9          | evbuffer_remove                | |
 | 9          | evbuffer_read_ntoh_32          | |
@@ -33,7 +33,6 @@
 | 6          | evbuffer_add_hton_64           | bfy_buffer_add_hton_64()     |
 | 4          | evbuffer_reserve_space         | |
 | 4          | evbuffer_commit_space          | |
-| 3          | tr_evbuffer_write              | |
 | 3          | evbuffer_remove_buffer         | |
 | 3          | evbuffer_expand                | |
 | 3          | evbuffer_copyout               | |

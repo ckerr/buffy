@@ -144,6 +144,7 @@ impl_block_release(struct bfy_block* block) {
     if (block_can_realloc(block)) {
         block_realloc(block, 0);
     }
+    *block = InitBlock;
 }
 
 /// bfy_buffer life cycle
@@ -260,8 +261,7 @@ bfy_buffer_peek(bfy_buffer* buf, size_t len_wanted, struct bfy_iovec* vec_out, s
 static struct bfy_block*
 impl_append_block(bfy_buffer* buf) {
     if (buf->blocks != NULL) {
-        ++buf->n_blocks;
-        buf->blocks = realloc(buf->blocks, sizeof(struct bfy_block) * buf->n_blocks);
+        buf->blocks = realloc(buf->blocks, sizeof(struct bfy_block) * ++buf->n_blocks);
     } else if (buf->block.data != NULL) {
         buf->n_blocks = 2;
         buf->blocks = malloc(sizeof(struct bfy_block) * buf->n_blocks);
@@ -366,18 +366,56 @@ bfy_buffer_add_vprintf(bfy_buffer* buf, char const* fmt, va_list args_in) {
 ///
 
 static size_t
-bfy_buffer_copyout(bfy_buffer* buf, void* tgt, size_t n_wanted) {
+limit_readable_size(bfy_buffer const* buf, size_t len) {
     size_t const max_size = bfy_buffer_get_readable_size(buf);
-    if (n_wanted > max_size) {
-        n_wanted = max_size;
+    return len < max_size ? len : max_size;
+}
+
+static void
+drain_first_block(bfy_buffer* buf) {
+    if (buf->blocks == NULL) {
+        buf->block = InitBlock;
+    } else {
+        impl_block_release(buf->blocks);
+        if (buf->n_blocks > 1) {
+            memmove(buf->blocks, buf->blocks+1, sizeof(struct bfy_block) * --buf->n_blocks);
+        }
+    }
+}
+
+bool
+bfy_buffer_drain(bfy_buffer* buf, size_t len) {
+    size_t n_left = limit_readable_size(buf, len);
+
+    for (;;) {
+        struct bfy_block* block = blocks_begin(buf);
+        size_t const n_this_block = block_get_readable_size(block);
+        if (n_this_block == 0) {
+            break;
+        }
+        if (n_left < n_this_block) {
+            block->read_pos += n_left;
+            break;
+        }
+        drain_first_block(buf);
+        n_left -= n_this_block;
     }
 
-    int const n_vecs = bfy_buffer_peek(buf, n_wanted, NULL, 0);
+    return true;
+}
+
+///
+
+static size_t
+bfy_buffer_copyout(bfy_buffer* buf, void* tgt, size_t len) {
+    size_t n_left = limit_readable_size(buf, len);
+
+    int const n_vecs = bfy_buffer_peek(buf, n_left, NULL, 0);
     struct bfy_iovec* vecs = calloc(n_vecs, sizeof(struct bfy_iovec));
-    bfy_buffer_peek(buf, n_wanted, vecs, n_vecs);
+    bfy_buffer_peek(buf, n_left, vecs, n_vecs);
 
     char* tgt_it = tgt;
-    char* tgt_end = tgt_it + n_wanted;
+    char* tgt_end = tgt_it + n_left;
     struct bfy_iovec* iov_it = vecs;
     struct bfy_iovec* iov_end = iov_it + n_vecs;
 
@@ -399,22 +437,9 @@ bfy_buffer_make_all_contiguous(bfy_buffer* buf) {
     return bfy_buffer_make_contiguous(buf, SIZE_MAX);
 }
 
-static void
-drain_first_block(bfy_buffer* buf) {
-    if (buf->blocks == NULL) {
-        buf->block = InitBlock;
-    } else {
-        impl_block_release(buf->blocks);
-        memmove(buf->blocks, buf->blocks+1, sizeof(struct bfy_block) * --buf->n_blocks);
-    }
-}
-
 void*
-bfy_buffer_make_contiguous(bfy_buffer* buf, size_t n_wanted) { 
-    size_t const max_size = bfy_buffer_get_readable_size(buf);
-    if (n_wanted > max_size) {
-        n_wanted = max_size;
-    }
+bfy_buffer_make_contiguous(bfy_buffer* buf, size_t n_wanted) {
+    n_wanted = limit_readable_size(buf, n_wanted);
 
     // if the first block already holds n_wanted, then we're done
     struct bfy_block* block = blocks_begin(buf);
@@ -427,8 +452,8 @@ bfy_buffer_make_contiguous(bfy_buffer* buf, size_t n_wanted) {
     int8_t* data = malloc(n_wanted);
     int8_t* data_it = data;
 
-    size_t n_remaining = n_wanted;
-    while (n_remaining > 0) {
+    size_t n_left = n_wanted;
+    while (n_left > 0) {
         block = blocks_begin(buf);
         if (block == blocks_cend(buf)) {
             break;
@@ -441,11 +466,11 @@ bfy_buffer_make_contiguous(bfy_buffer* buf, size_t n_wanted) {
             break;
         }
 
-        size_t const n_this_pass = n_remaining < n_readable ? n_remaining : n_readable;
+        size_t const n_this_pass = n_left < n_readable ? n_left : n_readable;
         memcpy(data_it, read_cbegin, n_this_pass);
         data_it += n_this_pass;
         block->read_pos += n_this_pass;
-        n_remaining -= n_this_pass;
+        n_left -= n_this_pass;
 
         size_t const readable_left = block_get_readable_size(block);
         if (readable_left > 0) {
@@ -467,8 +492,6 @@ bfy_buffer_make_contiguous(bfy_buffer* buf, size_t n_wanted) {
     };
     buf->blocks[0] = newblock;
     ++buf->n_blocks;
-
-    assert(bfy_buffer_get_readable_size(buf) == max_size);
 
     return block_read_begin(blocks_begin(buf));
 }

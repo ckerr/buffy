@@ -52,6 +52,7 @@ bool bfy_buffer_add_ch(bfy_buffer* buf, char ch);
 bool bfy_buffer_add_readonly(bfy_buffer* buf, const void* data, size_t size);
 bool bfy_buffer_add_printf(bfy_buffer* buf, char const* fmt, ...);
 bool bfy_buffer_add_vprintf(bfy_buffer* buf, char const* fmt, va_list args_in);
+bool bfy_buffer_drain(bfy_buffer* buf, size_t len);
 
 void* bfy_buffer_make_contiguous(bfy_buffer* buf, size_t size);
 void* bfy_buffer_make_all_contiguous(bfy_buffer* buf);
