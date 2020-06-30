@@ -30,6 +30,11 @@
 #include <string.h>  // memcpy()
 #include <stdlib.h>  // malloc(), realloc(), free()
 
+static size_t
+size_t_min(size_t a, size_t b) {
+    return a < b ? a : b;
+}
+
 /// block utils
 
 static struct bfy_block InitBlock = { 0 };
@@ -253,7 +258,7 @@ bfy_buffer_peek(bfy_buffer* buf, size_t len_wanted, struct bfy_iovec* vec_out, s
     struct bfy_block* end = blocks_end(buf);
     for (struct bfy_block* it=begin; it!=end; ++it) {
         size_t const n_readable = block_get_readable_size(it);
-        size_t const n_this_block = n_readable < n_left ? n_readable : n_left;
+        size_t const n_this_block = size_t_min(n_readable, n_left);
         if (n_this_block > 0) {
             if (vec_out != vec_end) {
                 vec_out->iov_base = block_read_begin(it);
@@ -382,8 +387,7 @@ bfy_buffer_add_vprintf(bfy_buffer* buf, char const* fmt, va_list args_in) {
 
 static size_t
 limit_readable_size(bfy_buffer const* buf, size_t len) {
-    size_t const max_size = bfy_buffer_get_readable_size(buf);
-    return len < max_size ? len : max_size;
+    return size_t_min(len, bfy_buffer_get_readable_size(buf));
 }
 
 static void
@@ -421,6 +425,7 @@ bfy_buffer_drain(bfy_buffer* buf, size_t len) {
 
 ///
 
+#if 0
 static size_t
 bfy_buffer_copyout(bfy_buffer* buf, void* tgt, size_t len) {
     size_t n_left = limit_readable_size(buf, len);
@@ -446,6 +451,56 @@ bfy_buffer_copyout(bfy_buffer* buf, void* tgt, size_t len) {
     free(vecs);
     return tgt_it - (char*)tgt;
 }
+#endif
+
+static size_t
+block_copyout(struct bfy_block* block, void* data, size_t n_wanted) {
+    size_t const n_copied = size_t_min(n_wanted, block_get_readable_size(block));
+    memcpy(data, block_read_cbegin(block), n_copied);
+    return n_copied;
+}
+
+static size_t
+block_remove(struct bfy_block* block, void* data, size_t n_wanted) {
+    size_t const n_copied = block_copyout(block, data, n_wanted);
+    block->read_pos += n_copied;
+    return n_copied;
+}
+
+size_t
+bfy_buffer_remove(bfy_buffer* buf, void* vdata, size_t n_wanted) {
+    int8_t* data = vdata;
+    size_t n_left = n_wanted;
+    while (n_left > 0) {
+        struct bfy_block* block = blocks_begin(buf);
+        size_t const n_this_block = block_remove(block, data, n_left);
+        data += n_this_block;
+        n_left -= n_this_block;
+
+        if (n_this_block == 0) {
+            break;
+        }
+        if (block_get_readable_size(block) > 0) {
+            break;
+        }
+
+        drain_first_block(buf);
+    }
+    return data - (int8_t*)vdata;
+}
+
+char*
+bfy_buffer_remove_string(bfy_buffer* buf, size_t* setme_len) {
+    size_t const len = bfy_buffer_get_readable_size(buf);
+    char* ret = malloc(len + 1);  // +1 for '\0'
+    size_t const moved_len = bfy_buffer_remove(buf, ret, len);
+    assert(moved_len == len);
+    ret[moved_len] = '\0';
+    if (setme_len != NULL) {
+        *setme_len = moved_len;
+    }
+    return ret;
+}
 
 void*
 bfy_buffer_make_all_contiguous(bfy_buffer* buf) {
@@ -464,38 +519,9 @@ bfy_buffer_make_contiguous(bfy_buffer* buf, size_t n_wanted) {
 
     // FIXME: if block->size >= n_wanted then do the copies there
 
+    // build a contiguous block
     int8_t* data = malloc(n_wanted);
-    int8_t* data_it = data;
-
-    size_t n_left = n_wanted;
-    while (n_left > 0) {
-        block = blocks_begin(buf);
-        if (block == blocks_cend(buf)) {
-            break;
-        }
-
-        int8_t const* read_cbegin = block_read_cbegin(block);
-        int8_t const* read_cend = block_read_cend(block);
-        size_t const n_readable = read_cend - read_cbegin;
-        if (n_readable == 0) {
-            break;
-        }
-
-        size_t const n_this_pass = n_left < n_readable ? n_left : n_readable;
-        memcpy(data_it, read_cbegin, n_this_pass);
-        data_it += n_this_pass;
-        block->read_pos += n_this_pass;
-        n_left -= n_this_pass;
-
-        size_t const readable_left = block_get_readable_size(block);
-        if (readable_left > 0) {
-            break;
-        }
-
-        drain_first_block(buf);
-    }
-
-    assert(data + n_wanted == data_it);
+    size_t const n_moved = bfy_buffer_remove(buf, data, n_wanted);
 
     // now prepend a new block with the contiguous memory
     buf->blocks = realloc(buf->blocks, sizeof(struct bfy_block) * (buf->n_blocks + 1));
@@ -510,87 +536,3 @@ bfy_buffer_make_contiguous(bfy_buffer* buf, size_t n_wanted) {
 
     return block_read_begin(blocks_begin(buf));
 }
-
-#if 0
-
-
-
-
-///
-
-void
-bfy_buffer_clear(bfy_buffer* buf) {
-    buf->write_pos = 0;
-}
-
-bfy_block
-bfy_buffer_take(bfy_buffer* buf) {
-    bfy_block ret = buf->block;
-    *buf = bfy_buffer_init();
-    return ret;
-}
-
-int
-bfy_buffer_take_string(bfy_buffer* buf, char** str, size_t* strsize) {
-    int ret = 0;
-
-    if (strsize != NULL) {
-        *strsize = bfy_buffer_get_readable_size(buf);
-    }
-
-    if ((bfy_buffer_get_writable_size(buf) < 1) || *((char*)bfy_buffer_end(buf)) != '\0') {
-        if (bfy_buffer_add_ch(buf, '\0')) {
-            errno = ENOMEM;
-            ret = -1;
-        }
-    }
-
-    *str = bfy_buffer_begin(buf);
-    *buf = bfy_buffer_init();
-    return ret;
-}
-
-const void*
-bfy_buffer_cbegin(bfy_buffer const* buf) {
-    return buf->block.data;
-}
-const void*
-bfy_buffer_cend(bfy_buffer const* buf) {
-    return bfy_buffer_cbegin(buf) + bfy_buffer_get_readable_size(buf);
-}
-
-
-void*
-bfy_buffer_begin(bfy_buffer * buf) {
-    return buf->block.data;
-}
-void*
-bfy_buffer_end(bfy_buffer* buf) {
-    return bfy_buffer_begin(buf) + bfy_buffer_get_readable_size(buf);
-}
-
-
-int
-bfy_buffer_reserve(bfy_buffer* buf, size_t size) {
-    bool const have_enough = buf->block.size >= size;
-    return have_enough ? 0 : bfy_block_resize(&buf->block, size);
-}
-
-int
-bfy_buffer_reserve_available(bfy_buffer* buf, size_t size) {
-    return bfy_buffer_reserve(buf, bfy_buffer_get_readable_size(buf) + size);
-}
-
-int
-bfy_buffer_add(bfy_buffer* buf, void const* addme, size_t size) {
-    if (bfy_buffer_reserve_available(buf, size) == -1) {
-        return -1;
-    }
-
-    memcpy(bfy_buffer_end(buf), addme, size);
-    buf->write_pos += size;
-    assert(buf->write_pos <= buf->block.size);
-    return 0;
-}
-
-#endif

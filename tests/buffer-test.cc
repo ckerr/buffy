@@ -539,6 +539,53 @@ TEST(Buffer, drain_too_much) {
     bfy_buffer_destruct(&buf);
 }
 
+TEST(Buffer, remove_string) {
+    // setup: build a buffer with multiple blocks
+    bfy_buffer buf = bfy_buffer_init();
+    std::string expected_str;
+    for (auto const& str : strs) {
+      bfy_buffer_add_readonly(&buf, std::data(str), std::size(str));
+      expected_str += str;
+    }
+    EXPECT_EQ(std::size(expected_str), bfy_buffer_get_readable_size(&buf));
+
+    // remove it to a string
+    size_t len;
+    auto* str = bfy_buffer_remove_string(&buf, &len);
+    EXPECT_EQ(0, bfy_buffer_get_readable_size(&buf));
+
+    // confirm that the string holds what we expected and is zero-terminated
+    EXPECT_EQ(std::size(expected_str), len);
+    EXPECT_EQ(std::size(expected_str), strlen(str));
+    EXPECT_EQ(expected_str, str);
+
+    // cleanup
+    free(str);
+    bfy_buffer_destruct(&buf);
+}
+
+TEST(Buffer, remove_string_with_empty_buf) {
+    // setup: build an empty buffer
+    bfy_buffer buf = bfy_buffer_init();
+    std::string const expected_str;
+    EXPECT_EQ(std::size(expected_str), bfy_buffer_get_readable_size(&buf));
+
+    // remove it to a string
+    size_t len;
+    auto* str = bfy_buffer_remove_string(&buf, &len);
+    EXPECT_EQ(0, bfy_buffer_get_readable_size(&buf));
+
+    // confirm it's an empty string
+    EXPECT_EQ(std::size(expected_str), len);
+    EXPECT_EQ(std::size(expected_str), strlen(str));
+    EXPECT_EQ(expected_str, str);
+
+    // cleanup
+    free(str);
+    bfy_buffer_destruct(&buf);
+}
+
+
 #if 0
 TEST(Buffer, clear) {
     BFY_HEAP_BUFFER(buf)
