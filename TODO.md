@@ -30,7 +30,7 @@
 | 6          | evbuffer_add_hton_64           | bfy_buffer_add_hton_64()          |
 | 4          | evbuffer_reserve_space         | |
 | 4          | evbuffer_commit_space          | |
-| 3          | evbuffer_remove_buffer         | |
+| 3          | evbuffer_remove_buffer         | bfy_buffer_remove_buffer()        |
 | 3          | evbuffer_expand                | bfy_buffer_ensure_writable_size() |
 | 3          | evbuffer_copyout               | bfy_buffer_copyout()              |
 | 3          | evbuffer_add_vprintf           | bfy_buffer_add_vprintf()          |

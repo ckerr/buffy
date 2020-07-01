@@ -224,12 +224,9 @@ bfy_buffer_free(bfy_buffer* buf) {
 size_t
 bfy_buffer_get_readable_size(bfy_buffer const* buf) {
     size_t size = 0;
-
-    struct bfy_block const* const end = blocks_cend(buf);
-    for (struct bfy_block const* it = blocks_cbegin(buf); it != end; ++it) {
+    for (struct bfy_block const* it = blocks_cbegin(buf), *end = blocks_cend(buf); it != end; ++it) {
         size += block_get_readable_size(it);
     }
-
     return size;
 }
 
@@ -241,7 +238,7 @@ bfy_buffer_get_writable_size(bfy_buffer const* buf) {
 /// readers
 
 size_t
-bfy_buffer_peek_all(bfy_buffer* buf, struct bfy_iovec* vec_out, size_t n_vec) {
+bfy_buffer_peek_all(bfy_buffer const* buf, struct bfy_iovec* vec_out, size_t n_vec) {
     return bfy_buffer_peek(buf, SIZE_MAX, vec_out, n_vec);
 }
 
@@ -255,7 +252,7 @@ block_peek(struct bfy_block const* block, size_t n) {
 }
 
 size_t
-bfy_buffer_peek(bfy_buffer* buf, size_t len_wanted, struct bfy_iovec* vec_out, size_t n_vec) {
+bfy_buffer_peek(bfy_buffer const* buf, size_t len_wanted, struct bfy_iovec* vec_out, size_t n_vec) {
     size_t n_left = len_wanted;
     struct bfy_iovec const* const vec_end = vec_out + n_vec;
 
@@ -279,7 +276,7 @@ bfy_buffer_peek(bfy_buffer* buf, size_t len_wanted, struct bfy_iovec* vec_out, s
 /// adder helpers
 
 static struct bfy_block*
-impl_append_block(bfy_buffer* buf) {
+buffer_append_block(bfy_buffer* buf) {
     size_t const blocksize = sizeof(struct bfy_block);
     if (buf->blocks != NULL) {
         buf->blocks = realloc(buf->blocks, blocksize * ++buf->n_blocks);
@@ -296,16 +293,16 @@ impl_append_block(bfy_buffer* buf) {
 }
 
 static struct bfy_block*
-impl_get_writable_back(bfy_buffer* buf) {
+buffer_get_writable_back(bfy_buffer* buf) {
     struct bfy_block* back = blocks_back(buf);
-    return block_is_writable(back) ? back : impl_append_block(buf);
+    return block_is_writable(back) ? back : buffer_append_block(buf);
 }
 
 /// adders
 
 bool
 bfy_buffer_add_readonly(bfy_buffer* buf, const void* data, size_t size) {
-    struct bfy_block* block = impl_append_block(buf);
+    struct bfy_block* block = buffer_append_block(buf);
     block->data = (void*)data;
     block->read_pos = 0;
     block->size = size;
@@ -317,7 +314,7 @@ bfy_buffer_add_readonly(bfy_buffer* buf, const void* data, size_t size) {
 
 bool
 bfy_buffer_add(bfy_buffer* buf, const void* data, size_t size) {
-    struct bfy_block* back = impl_get_writable_back(buf);
+    struct bfy_block* back = buffer_get_writable_back(buf);
 
     if (!block_ensure_writable_size(back, size)) {
         return false;
@@ -349,7 +346,7 @@ bfy_buffer_ensure_writable_size(bfy_buffer* buf, size_t size) {
         return true;
     }
     if (!block_can_realloc(block)) {
-        block = impl_append_block(buf);
+        block = buffer_append_block(buf);
     }
     return block_ensure_writable_size(block, size);
 }
@@ -362,7 +359,7 @@ bfy_buffer_expand(bfy_buffer* buf, size_t size) {
 
 bool
 bfy_buffer_add_vprintf(bfy_buffer* buf, char const* fmt, va_list args_in) {
-    struct bfy_block* back = impl_get_writable_back(buf);
+    struct bfy_block* back = buffer_get_writable_back(buf);
     for(;;) {
         void* const begin = block_write_begin(back);
         size_t const available = block_write_cend(back) - begin;
@@ -386,7 +383,7 @@ bfy_buffer_add_vprintf(bfy_buffer* buf, char const* fmt, va_list args_in) {
 ///
 
 static void
-buf_drain_first_n_blocks(bfy_buffer* buf, size_t n) {
+buffer_drain_first_n_blocks(bfy_buffer* buf, size_t n) {
     block_release(&buf->block);
     buf->block = InitBlock;
 
@@ -429,7 +426,7 @@ bfy_buffer_drain(bfy_buffer* buf, size_t len_wanted) {
         ++it;
     }
 
-    buf_drain_first_n_blocks(buf, it - blocks_cbegin(buf));
+    buffer_drain_first_n_blocks(buf, it - blocks_cbegin(buf));
     return true;
 }
 
@@ -481,7 +478,7 @@ bfy_buffer_remove(bfy_buffer* buf, void* vdata, size_t n_wanted) {
         }
     }
 
-    buf_drain_first_n_blocks(buf, it - blocks_cbegin(buf));
+    buffer_drain_first_n_blocks(buf, it - blocks_cbegin(buf));
     return data - (int8_t*)vdata;
 }
 
@@ -508,6 +505,16 @@ buf_limit_readable_size(bfy_buffer const* buf, size_t len) {
     return size_t_min(len, bfy_buffer_get_readable_size(buf));
 }
 
+static struct bfy_block*
+buffer_prepend_block(bfy_buffer* buf) {
+    const size_t blocksize = sizeof(struct bfy_block);
+    buf->blocks = realloc(buf->blocks, blocksize * (buf->n_blocks + 1));
+    memmove(buf->blocks + 1, buf->blocks, blocksize * buf->n_blocks);
+    buf->blocks[0] = InitBlock;
+    ++buf->n_blocks;
+    return buf->blocks;
+}
+
 void*
 bfy_buffer_make_contiguous(bfy_buffer* buf, size_t n_wanted) {
     n_wanted = buf_limit_readable_size(buf, n_wanted);
@@ -525,18 +532,15 @@ bfy_buffer_make_contiguous(bfy_buffer* buf, size_t n_wanted) {
     size_t const n_moved = bfy_buffer_remove(buf, data, n_wanted);
 
     // now prepend a new block with the contiguous memory
-    const size_t blocksize = sizeof(struct bfy_block);
-    buf->blocks = realloc(buf->blocks, blocksize * (buf->n_blocks + 1));
-    memmove(buf->blocks + 1, buf->blocks, blocksize * buf->n_blocks);
     struct bfy_block const newblock = {
         .data = data,
         .size = n_moved,
         .write_pos = n_moved
     };
-    buf->blocks[0] = newblock;
-    ++buf->n_blocks;
+    block = buffer_prepend_block(buf);
+    *block = newblock;
 
-    return block_read_begin(blocks_begin(buf));
+    return block_read_begin(block);
 }
 
 static bool
@@ -544,32 +548,66 @@ buf_has_readable(bfy_buffer const* buf) {
     return block_has_readable(blocks_cbegin(buf));
 }
 
-bool
-bfy_buffer_add_buffer(bfy_buffer* tgt, bfy_buffer* src) {
-    struct bfy_block const* const src_begin = blocks_cbegin(src);
-    struct bfy_block const* const src_end = blocks_cend(src);
-    size_t const n_src_blocks = buf_has_readable(src) == 0 ? 0 : src_end - src_begin;
-
-    struct bfy_block const* const tgt_begin = blocks_cbegin(tgt);
-    struct bfy_block const* const tgt_end = blocks_cend(tgt);
-    size_t const n_tgt_blocks = buf_has_readable(tgt) == 0 ? 0 : tgt_end - tgt_begin;
-
-    // rebuild tgt's block pointers
-    if (n_tgt_blocks + n_src_blocks > 0) {
+static void
+buffer_append_blocks(bfy_buffer* tgt, struct bfy_block const* new_blocks, size_t n_new_blocks) {
+    if (n_new_blocks > 0) {
+        struct bfy_block const* old_blocks = blocks_cbegin(tgt);
+        size_t const n_old_blocks = buf_has_readable(tgt) ? blocks_cend(tgt) - old_blocks : 0;
         const size_t blocksize = sizeof(struct bfy_block);
-        struct bfy_block* const blocks = malloc(blocksize * (n_tgt_blocks + n_src_blocks));
-        memcpy(blocks, tgt_begin, blocksize * n_tgt_blocks);
-        memcpy(blocks + n_tgt_blocks, src_begin, blocksize * n_src_blocks);
+        struct bfy_block* const blocks = malloc(blocksize * (n_old_blocks + n_new_blocks));
+        memcpy(blocks, old_blocks, blocksize * n_old_blocks);
+        memcpy(blocks + n_old_blocks, new_blocks, blocksize * n_new_blocks);
         free(tgt->blocks);
         tgt->blocks = blocks;
-        tgt->n_blocks = n_tgt_blocks + n_src_blocks;
+        tgt->n_blocks = n_old_blocks + n_new_blocks;
     }
+}
 
-    // cleanup src's block pointers w/o releasing the blocks themselves
+bool
+bfy_buffer_add_buffer(bfy_buffer* buf, bfy_buffer* src) {
+    // copy the blocks
+    struct bfy_block const* const new_blocks = blocks_cbegin(src);
+    size_t const n_new_blocks = blocks_cend(src) - new_blocks;
+    buffer_append_blocks(buf, new_blocks, n_new_blocks);
+
+    // clean up src's block pointers w/o releasing the blocks themselves
     free (src->blocks);
     src->blocks = NULL;
     src->n_blocks = 0;
     src->block = InitBlock;
+
+    return true;
+}
+
+bool
+bfy_buffer_remove_buffer(bfy_buffer* buf, bfy_buffer* tgt, size_t n_bytes_wanted)
+{
+    size_t n_left = n_bytes_wanted;
+
+    // see how many blocks get removed as-is
+    // and how many bytes will be left if we need to move half-a-block
+    size_t n_blocks_removed = 0;
+    for (struct bfy_block const* it = blocks_cbegin(buf), *end = blocks_cend(buf); it != end; ++it) {
+        size_t const n_readable = block_get_readable_size(it);
+        if (n_left < n_readable) {
+            break;
+        }
+        n_left -= n_readable;
+        ++n_blocks_removed;
+    }
+
+    // are there any blocks that get moved over completely?
+    if (n_blocks_removed > 0) {
+        buffer_append_blocks(tgt, blocks_cbegin(buf), n_blocks_removed);
+        buffer_drain_first_n_blocks(buf, n_blocks_removed);
+    }
+
+    // are there any remainder bytes to move over in a new block?
+    if (n_left > 0) {
+        struct bfy_block* block = blocks_begin(buf);
+        bfy_buffer_add(tgt, block_read_cbegin(block), n_left);
+        block_drain(block, n_left);
+    }
 
     return true;
 }

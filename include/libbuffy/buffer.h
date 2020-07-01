@@ -60,15 +60,17 @@ size_t bfy_buffer_get_readable_size(bfy_buffer const* buf);
 bool bfy_buffer_ensure_writable_size(bfy_buffer* buf, size_t size);
 bool bfy_buffer_expand(bfy_buffer* buf, size_t size);
 
-size_t bfy_buffer_peek(bfy_buffer* buf, size_t size, struct bfy_iovec* vec_out, size_t n_vec);
-size_t bfy_buffer_peek_all(bfy_buffer* buf, struct bfy_iovec* vec_out, size_t n_vec);
+size_t bfy_buffer_peek(bfy_buffer const* buf, size_t size, struct bfy_iovec* vec_out, size_t n_vec);
+size_t bfy_buffer_peek_all(bfy_buffer const* buf, struct bfy_iovec* vec_out, size_t n_vec);
 
 bool bfy_buffer_add(bfy_buffer* buf, void const* addme, size_t n);
 bool bfy_buffer_add_ch(bfy_buffer* buf, char ch);
 bool bfy_buffer_add_readonly(bfy_buffer* buf, const void* data, size_t size);
 bool bfy_buffer_add_printf(bfy_buffer* buf, char const* fmt, ...);
 bool bfy_buffer_add_vprintf(bfy_buffer* buf, char const* fmt, va_list args_in);
-bool bfy_buffer_add_buffer(bfy_buffer* tgt, bfy_buffer* src);
+bool bfy_buffer_add_buffer(bfy_buffer* buf, bfy_buffer* src);
+bool bfy_buffer_remove_buffer(bfy_buffer* buf, bfy_buffer* tgt, size_t len);
+
 bool bfy_buffer_drain(bfy_buffer* buf, size_t len);
 
 void* bfy_buffer_make_contiguous(bfy_buffer* buf, size_t size);
