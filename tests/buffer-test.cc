@@ -159,8 +159,7 @@ TEST(Buffer, peek) {
     // test that a single-vec peek works
     auto vecs = std::array<struct bfy_iovec, 4>{};
     std::fill(std::begin(vecs), std::end(vecs), JunkVec);
-    auto n_vecs = bfy_buffer_peek(&buf, std::size(pt1), std::data(vecs), std::size(vecs));
-    EXPECT_EQ(1, n_vecs);
+    EXPECT_EQ(1, bfy_buffer_peek(&buf, std::size(pt1), std::data(vecs), std::size(vecs)));
     EXPECT_EQ(std::data(pt1), vecs[0].iov_base);
     EXPECT_EQ(std::size(pt1), vecs[0].iov_len);
     EXPECT_EQ(JunkVec, vecs[1]);
@@ -170,8 +169,7 @@ TEST(Buffer, peek) {
 
     // test that a multivec peek works
     std::fill(std::begin(vecs), std::end(vecs), JunkVec);
-    n_vecs = bfy_buffer_peek(&buf, std::size(pt1)+1, std::data(vecs), std::size(vecs));
-    EXPECT_EQ(2, n_vecs);
+    EXPECT_EQ(2, bfy_buffer_peek(&buf, std::size(pt1)+1, std::data(vecs), std::size(vecs)));
     EXPECT_EQ(std::data(pt1), vecs[0].iov_base);
     EXPECT_EQ(std::size(pt1), vecs[0].iov_len);
     EXPECT_EQ(std::data(pt2), vecs[1].iov_base);
@@ -184,8 +182,7 @@ TEST(Buffer, peek) {
     // test that the number extents needed is returned
     // even if it's greater than the number of extents passed in
     std::fill(std::begin(vecs), std::end(vecs), JunkVec);
-    n_vecs = bfy_buffer_peek(&buf, std::size(pt1)+std::size(pt2), std::data(vecs), 1);
-    EXPECT_EQ(2, n_vecs);
+    EXPECT_EQ(2, bfy_buffer_peek(&buf, std::size(pt1)+std::size(pt2), std::data(vecs), 1));
     EXPECT_EQ(std::data(pt1), vecs[0].iov_base);
     EXPECT_EQ(std::size(pt1), vecs[0].iov_len);
     EXPECT_EQ(JunkVec, vecs[2]);
@@ -661,6 +658,32 @@ TEST(Buffer, endian_64) {
     EXPECT_TRUE(bfy_buffer_remove_ntoh_u64(&local.buf, &out));
     EXPECT_EQ(in, out);
 }
+
+TEST(Buffer, add_buffer) {
+    auto a = BufferWithReadonlyStrings {};
+    auto b = BufferWithReadonlyStrings {};
+    auto const n_expected_vecs = bfy_buffer_peek_all(&a.buf, nullptr, 0) + bfy_buffer_peek_all(&b.buf, nullptr, 0);
+    auto const expected_size = std::size(a.allstrs) + std::size(b.allstrs);
+
+    auto buf = bfy_buffer_init();
+    EXPECT_TRUE(bfy_buffer_add_buffer(&buf, &a.buf));
+    EXPECT_TRUE(bfy_buffer_add_buffer(&buf, &b.buf));
+    EXPECT_EQ(n_expected_vecs, bfy_buffer_peek_all(&buf, NULL, 0));
+    EXPECT_EQ(expected_size, bfy_buffer_get_readable_size(&buf));
+
+    auto len = size_t {};
+    auto str = bfy_buffer_remove_string(&buf, &len);
+    EXPECT_EQ(expected_size, len);
+    EXPECT_EQ(expected_size, strlen(str));
+
+    free(str);
+    bfy_buffer_destruct(&buf);
+}
+
+
+
+
+
 
 
 #if 0

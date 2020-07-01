@@ -24,8 +24,8 @@
 | 11         | evbuffer_drain                 | bfy_buffer_drain()                |
 | 11         | evbuffer_add_hton_32           | bfy_buffer_add_hton_32()          |
 | 9          | evbuffer_remove                | bfy_buffer_remove()               |
-| 9          | evbuffer_read_ntoh_32          | bfy_buffer_remove_ntoh_32()|
-| 9          | evbuffer_add_buffer            | |
+| 9          | evbuffer_read_ntoh_32          | bfy_buffer_remove_ntoh_32()       |
+| 9          | evbuffer_add_buffer            | bfy_buffer_add_buffer()           |
 | 7          | evbuffer_add_uint16            | bfy_buffer_add_hton_16()          |
 | 6          | evbuffer_add_hton_64           | bfy_buffer_add_hton_64()          |
 | 4          | evbuffer_reserve_space         | |
