@@ -60,6 +60,7 @@ bool bfy_buffer_add_vprintf(bfy_buffer* buf, char const* fmt, va_list args_in);
 bool bfy_buffer_add_buffer(bfy_buffer* buf, bfy_buffer* src);
 bool bfy_buffer_remove_buffer(bfy_buffer* buf, bfy_buffer* tgt, size_t len);
 
+void bfy_buffer_reset(bfy_buffer* buf);
 bool bfy_buffer_drain(bfy_buffer* buf, size_t len);
 
 void* bfy_buffer_make_contiguous(bfy_buffer* buf, size_t size);

@@ -71,6 +71,14 @@ static bool
 block_is_writable(struct bfy_block const* block) {
     return (block->flags & BFY_BLOCK_FLAGS_READONLY) == 0;
 }
+static bool
+block_is_recyclable(struct bfy_block const* block) {
+    return block_is_writable(block);
+}
+static bool
+block_has_readable(struct bfy_block const* block) {
+    return block->write_pos > block->read_pos;
+}
 
 static void*
 block_read_begin(struct bfy_block* block) {
@@ -177,13 +185,12 @@ bfy_buffer_new_unmanaged(void* data, size_t size) {
 
 void
 bfy_buffer_destruct(bfy_buffer* buf) {
-    struct bfy_block* begin = blocks_begin(buf);
-    struct bfy_block* end = blocks_end(buf);
-    for (struct bfy_block* it=begin; it!=end; ++it) {
+    for (struct bfy_block *it=blocks_begin(buf), *end=blocks_end(buf); it!=end; ++it) {
         block_release(it);
     }
     free(buf->blocks);
     buf->blocks = NULL;
+    buf->n_blocks = 0;
 }
 
 void
@@ -220,15 +227,6 @@ block_peek_content(struct bfy_block const* block, size_t n) {
     struct bfy_iovec vec = {
         .iov_base = (void*) block_read_cbegin(block),
         .iov_len = size_t_min(n, block_get_readable_size(block))
-    };
-    return vec;
-}
-
-static struct bfy_iovec
-block_peek_space(struct bfy_block const* block) {
-    struct bfy_iovec vec = {
-        .iov_base = (void*) (block->data + block->write_pos),
-        .iov_len = block_get_writable_size(block)
     };
     return vec;
 }
@@ -280,17 +278,58 @@ buffer_get_writable_back(bfy_buffer* buf) {
     return block_is_writable(back) ? back : buffer_append_block(buf);
 }
 
+/// space
+
+void
+bfy_buffer_add_chain(struct bfy_buffer* buf) {
+    struct bfy_block* block = buffer_get_writable_back(buf);
+    if (block_has_readable(block)) {
+        buffer_append_block(buf);
+    }
+}
+
+static struct bfy_iovec
+block_peek_space(struct bfy_block const* block) {
+    struct bfy_iovec vec = {
+        .iov_base = (void*) (block->data + block->write_pos),
+        .iov_len = block_get_writable_size(block)
+    };
+    return vec;
+}
+
+struct bfy_iovec
+bfy_buffer_peek_space(struct bfy_buffer* buf) {
+    return block_peek_space(blocks_back(buf));
+}
+
+struct bfy_iovec
+bfy_buffer_reserve_space(struct bfy_buffer* buf, size_t n_wanted) {
+    bfy_buffer_ensure_space(buf, n_wanted);
+    return bfy_buffer_peek_space(buf);
+}
+
+bool
+bfy_buffer_commit_space(struct bfy_buffer* buf, size_t size) {
+    struct bfy_block* block = buffer_get_writable_back(buf);
+    size_t const n_writable = block_get_writable_size(block);
+    assert (size <= n_writable);
+    size = size_t_min(size, n_writable);
+    block->write_pos += size;
+    return true;
+}
+
 /// adders
 
 bool
 bfy_buffer_add_readonly(bfy_buffer* buf, const void* data, size_t size) {
-    struct bfy_block* block = buffer_append_block(buf);
-    block->data = (void*)data;
-    block->read_pos = 0;
-    block->size = size;
-    block->write_pos = size;
-    block->flags |= BFY_BLOCK_FLAGS_READONLY;
-    block->flags |= BFY_BLOCK_FLAGS_UNMANAGED;
+    struct bfy_block const block = {
+        .data = (void*)  data,
+        .size = size,
+        .read_pos = 0,
+        .write_pos = size,
+        .flags = BFY_BLOCK_FLAGS_READONLY | BFY_BLOCK_FLAGS_UNMANAGED
+    };
+    *buffer_append_block(buf) = block;
     return true;
 }
 
@@ -344,11 +383,11 @@ bfy_buffer_add_vprintf(bfy_buffer* buf, char const* fmt, va_list args_in) {
     va_list args;
     va_copy(args, args_in);
     size_t n = vsnprintf(io.iov_base, io.iov_len, fmt, args);
+    size_t const space_wanted = n + 1; // +1 for trailing '\0'
     va_end(args);
 
     // if not, make some more free space and try again
-    if (n >= io.iov_len) {
-        size_t const space_wanted = n + 1; // +1 for trailing '\0'
+    if (space_wanted > io.iov_len) {
         io = bfy_buffer_reserve_space(buf, space_wanted);
         va_copy(args, args_in);
         n = vsnprintf(io.iov_base, io.iov_len, fmt, args);
@@ -363,16 +402,44 @@ bfy_buffer_add_vprintf(bfy_buffer* buf, char const* fmt, va_list args_in) {
 
 ///
 
+void
+bfy_buffer_reset(bfy_buffer* buf) {
+    struct bfy_block recycle_me = InitBlock;
+    for (struct bfy_block *it=blocks_begin(buf), *end=blocks_end(buf); it != end; ++it) {
+        if (block_is_recyclable(it) && it->size > recycle_me.size) {
+            block_release(&recycle_me);
+            recycle_me = *it;
+            recycle_me.read_pos = recycle_me.write_pos = 0;
+        } else {
+            block_release(it);
+        }
+    }
+
+    free(buf->blocks);
+    buf->blocks = NULL;
+    buf->n_blocks = 0;
+
+    buf->block = recycle_me;
+    // fprintf(stderr, "after reset/recycle, %zu content %zu space\n", bfy_buffer_get_content_len(buf), bfy_buffer_get_space_len(buf));
+}
+
 static void
 buffer_drain_first_n_blocks(bfy_buffer* buf, size_t n) {
+    size_t const total_blocks = blocks_end(buf) - blocks_begin(buf);
+    n = size_t_min(n, total_blocks);
+    if (n == total_blocks) {
+        bfy_buffer_reset(buf);
+        return;
+    }
+    
     block_release(&buf->block);
     buf->block = InitBlock;
 
+    for (struct bfy_block *it=blocks_begin(buf), *end=it+n; it!=end; ++it) {
+        block_release(it);
+    }
+
     if (buf->blocks != NULL) {
-        assert(n <= buf->n_blocks);
-        for (size_t i = 0; i < n; ++i) {
-            block_release(buf->blocks + i);
-        }
         const size_t blocksize = sizeof(struct bfy_block);
         memmove(buf->blocks, buf->blocks + n, blocksize * (buf->n_blocks -= n));
         if (buf->n_blocks == 0) {
@@ -386,11 +453,6 @@ block_drain(struct bfy_block* block, size_t n) {
     struct bfy_iovec const vec = block_peek_content(block, n);
     block->read_pos += vec.iov_len;
     return vec.iov_len;
-}
-
-static bool
-block_has_readable(struct bfy_block const* block) {
-    return block->write_pos > block->read_pos;
 }
 
 bool
@@ -579,34 +641,5 @@ bfy_buffer_remove_buffer(bfy_buffer* buf, bfy_buffer* tgt, size_t n_bytes_wanted
         block_drain(block, n_left);
     }
 
-    return true;
-}
-
-void
-bfy_buffer_add_chain(struct bfy_buffer* buf) {
-    struct bfy_block* block = buffer_get_writable_back(buf);
-    if (block_has_readable(block)) {
-        buffer_append_block(buf);
-    }
-}
-
-struct bfy_iovec
-bfy_buffer_peek_space(struct bfy_buffer* buf) {
-    return block_peek_space(blocks_back(buf));
-}
-
-struct bfy_iovec
-bfy_buffer_reserve_space(struct bfy_buffer* buf, size_t n_wanted) {
-    bfy_buffer_ensure_space(buf, n_wanted);
-    return bfy_buffer_peek_space(buf);
-}
-
-bool
-bfy_buffer_commit_space(struct bfy_buffer* buf, size_t size) {
-    struct bfy_block* block = buffer_get_writable_back(buf);
-    size_t const n_writable = block_get_writable_size(block);
-    assert (size <= n_writable);
-    size = size_t_min(size, n_writable);
-    block->write_pos += size;
     return true;
 }

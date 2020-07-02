@@ -712,12 +712,9 @@ TEST(Buffer, add_buffer) {
     EXPECT_EQ(n_expected_vecs, bfy_buffer_peek_all(&buf, NULL, 0));
     EXPECT_EQ(expected_size, bfy_buffer_get_content_len(&buf));
 
-    auto len = size_t {};
-    auto str = bfy_buffer_remove_string(&buf, &len);
-    EXPECT_EQ(expected_size, len);
-    EXPECT_EQ(expected_size, strlen(str));
+    auto const str = buffer_remove_string(&buf);
+    EXPECT_EQ(expected_size, std::size(str));
 
-    free(str);
     bfy_buffer_destruct(&buf);
 }
 
@@ -867,22 +864,36 @@ TEST(Buffer, commit_space) {
     EXPECT_EQ(0, bfy_buffer_get_content_len(&buf));
 
     // setup pt 2: reserve space and write into it
-    auto constexpr str_in = std::string_view { "Lorem ipsum dolor sit amet" };
-    auto const io = bfy_buffer_reserve_space(&buf, std::size(str_in));
+    auto constexpr str = std::string_view { "Lorem ipsum dolor sit amet" };
+    auto const io = bfy_buffer_reserve_space(&buf, std::size(str));
     auto const precommit_space = bfy_buffer_get_space_len(&buf);
     EXPECT_NE(nullptr, io.iov_base);
-    EXPECT_LE(std::size(str_in), io.iov_len);
-    memcpy(io.iov_base, std::data(str_in), std::size(str_in));
+    EXPECT_LE(std::size(str), io.iov_len);
+    memcpy(io.iov_base, std::data(str), std::size(str));
 
     // confirm that the space can be committed
-    EXPECT_TRUE(bfy_buffer_commit_space(&buf, std::size(str_in)));
+    EXPECT_TRUE(bfy_buffer_commit_space(&buf, std::size(str)));
 
     // confirm that the committed space is now readable content
-    EXPECT_EQ(std::size(str_in), bfy_buffer_get_content_len(&buf));
-    EXPECT_EQ(precommit_space - std::size(str_in), bfy_buffer_get_space_len(&buf));
-    auto* str_out = bfy_buffer_remove_string(&buf, nullptr);
-    EXPECT_EQ(str_in, str_out);
-    free(str_out);
+    EXPECT_EQ(std::size(str), bfy_buffer_get_content_len(&buf));
+    EXPECT_EQ(precommit_space - std::size(str), bfy_buffer_get_space_len(&buf));
+    EXPECT_EQ(str, buffer_remove_string(&buf));
+
+    bfy_buffer_destruct(&buf);
+}
+
+TEST(Buffer, reset) {
+    auto constexpr n_bytes = 64;
+    auto array = std::array<char, n_bytes> {};
+    auto buf = bfy_buffer_init_unmanaged(std::data(array), std::size(array));
+
+    auto constexpr str = std::string_view { "Lorem ipsum dolor sit amet" };
+    EXPECT_TRUE(bfy_buffer_add(&buf, std::data(str), std::size(str)));
+    EXPECT_EQ(std::size(str), bfy_buffer_get_content_len(&buf));
+    EXPECT_EQ(n_bytes - std::size(str), bfy_buffer_get_space_len(&buf));
+    bfy_buffer_reset(&buf);
+    EXPECT_EQ(0, bfy_buffer_get_content_len(&buf));
+    EXPECT_EQ(n_bytes, bfy_buffer_get_space_len(&buf));
 
     bfy_buffer_destruct(&buf);
 }
