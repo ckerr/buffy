@@ -32,6 +32,12 @@ struct bfy_block {
     int flags;
 };
 
+struct bfy_buffer {
+    struct bfy_block block;
+    struct bfy_block* blocks;
+    size_t n_blocks;
+};
+
 #ifdef __cplusplus
 }
 #endif

@@ -39,14 +39,7 @@ struct bfy_iovec {
     size_t iov_len;
 };
 
-typedef struct bfy_buffer {
-    struct bfy_block block;
-    struct bfy_block* blocks;
-    size_t n_blocks;
-}
-bfy_buffer;
-
-extern const struct bfy_buffer BfyBufferInit;
+typedef struct bfy_buffer bfy_buffer;
 
 struct bfy_buffer bfy_buffer_init(void);
 struct bfy_buffer* bfy_buffer_new(void);
@@ -55,11 +48,7 @@ struct bfy_buffer* bfy_buffer_new_unmanaged(void* data, size_t size);
 void bfy_buffer_destruct(bfy_buffer* buf);
 void bfy_buffer_free(bfy_buffer*);
 
-size_t bfy_buffer_get_writable_size(bfy_buffer const* buf);
-size_t bfy_buffer_get_readable_size(bfy_buffer const* buf);
-bool bfy_buffer_ensure_writable_size(bfy_buffer* buf, size_t size);
-bool bfy_buffer_expand(bfy_buffer* buf, size_t size);
-
+size_t bfy_buffer_get_content_len(bfy_buffer const* buf);
 size_t bfy_buffer_peek(bfy_buffer const* buf, size_t size, struct bfy_iovec* vec_out, size_t n_vec);
 size_t bfy_buffer_peek_all(bfy_buffer const* buf, struct bfy_iovec* vec_out, size_t n_vec);
 
@@ -83,6 +72,12 @@ size_t bfy_buffer_copyout(bfy_buffer const* buf, void* vdata, size_t n_wanted);
 struct bfy_iovec bfy_buffer_peek_space(struct bfy_buffer* buf);
 struct bfy_iovec bfy_buffer_reserve_space(struct bfy_buffer* buf, size_t size);
 bool bfy_buffer_commit_space(struct bfy_buffer* buf, size_t size);
+
+size_t bfy_buffer_get_space_len(bfy_buffer const* buf);
+bool bfy_buffer_ensure_space(bfy_buffer* buf, size_t size);
+bool bfy_buffer_expand(bfy_buffer* buf, size_t size);
+
+void bfy_buffer_add_chain(struct bfy_buffer* buf);
 
 #if 0
 int bfy_buffer_take_string(bfy_buffer* buf, char** str, size_t* strsize);
