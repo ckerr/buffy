@@ -97,7 +97,6 @@ block_realloc(struct bfy_block* block, size_t requested) {
     // maybe free the memory
     if (requested == 0) {
         if (block->data != NULL) {
-            fprintf(stderr, "free block %p data %p\n", (void*)block, (void*)block->data);
             free(block->data);
             block->data = NULL;
         }
@@ -116,9 +115,7 @@ block_realloc(struct bfy_block* block, size_t requested) {
         return true;
     }
 
-    void* old_data = block->data;
     void* new_data = realloc(block->data, new_size);
-    fprintf(stderr, "realloc %p -> %p %zu\n", old_data, new_data, new_size);
     if (new_data == NULL) {
         errno = ENOMEM;
         return false;
@@ -300,7 +297,7 @@ bfy_buffer_add_readonly(bfy_buffer* buf, const void* data, size_t size) {
 bool
 bfy_buffer_add(bfy_buffer* buf, const void* data, size_t size) {
     struct bfy_iovec const io = bfy_buffer_reserve_space(buf, size);
-    if (io.iov_len < size) {
+    if (data == NULL || io.iov_base == NULL || io.iov_len < size) {
         return false;
     }
     memcpy(io.iov_base, data, size);
@@ -342,23 +339,26 @@ bfy_buffer_expand(bfy_buffer* buf, size_t size) {
 
 bool
 bfy_buffer_add_vprintf(bfy_buffer* buf, char const* fmt, va_list args_in) {
+    // see if we can print it into the free space
     struct bfy_iovec io = bfy_buffer_peek_space(buf);
-    for(;;) {
-        va_list args;
+    va_list args;
+    va_copy(args, args_in);
+    size_t n = vsnprintf(io.iov_base, io.iov_len, fmt, args);
+    va_end(args);
+
+    // if not, make some more free space and try again
+    if (n >= io.iov_len) {
+        size_t const space_wanted = n + 1; // +1 for trailing '\0'
+        io = bfy_buffer_reserve_space(buf, space_wanted);
         va_copy(args, args_in);
-        size_t const n = vsnprintf(io.iov_base, io.iov_len, fmt, args);
+        n = vsnprintf(io.iov_base, io.iov_len, fmt, args);
         va_end(args);
-
-        if (n < io.iov_len) {
-            bfy_buffer_commit_space(buf, n);
-            return true;
-        }
-
-        io = bfy_buffer_reserve_space(buf, n+1); // +1 for trailing '\0'
-        if (io.iov_len < n + 1) {
-            return false;
-        }
     }
+
+    if (n < io.iov_len) {
+        bfy_buffer_commit_space(buf, n);
+    }
+    return n < io.iov_len;
 }
 
 ///
@@ -597,9 +597,8 @@ bfy_buffer_peek_space(struct bfy_buffer* buf) {
 
 struct bfy_iovec
 bfy_buffer_reserve_space(struct bfy_buffer* buf, size_t n_wanted) {
-    struct bfy_block* block = buffer_get_writable_back(buf);
-    block_ensure_writable_size(block, n_wanted);
-    return block_peek_space(block);
+    bfy_buffer_ensure_space(buf, n_wanted);
+    return bfy_buffer_peek_space(buf);
 }
 
 bool

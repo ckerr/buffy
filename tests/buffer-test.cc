@@ -62,6 +62,14 @@ auto buffer_copyout(bfy_buffer const* buf, size_t n_bytes = SIZE_MAX) {
     return bytes;
 }
 
+auto buffer_remove_string(bfy_buffer* buf) {
+    size_t len;
+    auto* pch = bfy_buffer_remove_string(buf, &len);
+    auto str = std::string(pch, len);
+    free(pch);
+    return str;
+}
+
 template<std::size_t N>
 class BufferWithLocalArray {
  public:
@@ -264,6 +272,17 @@ TEST(Buffer, add_printf) {
     EXPECT_EQ(expected.length(), bfy_buffer_get_content_len(&local.buf));
     EXPECT_EQ(std::size(local.array) - expected.length(), bfy_buffer_get_space_len(&local.buf));
     EXPECT_EQ(expected, std::data(local.array));
+}
+
+TEST(Buffer, add_printf_when_not_enough_space) {
+    BufferWithLocalArray<4> local;
+
+    // printf into the buffer
+    EXPECT_TRUE(bfy_buffer_add_printf(&local.buf, "%s, %s!", "Hello", "World"));
+
+    // confirm that the string was written into the buffer
+    auto constexpr expected = std::string_view { "Hello, World!" };
+    EXPECT_EQ(expected, buffer_remove_string(&local.buf));
 }
 
 TEST(Buffer, make_contiguous_when_only_one_block) {
@@ -851,7 +870,6 @@ TEST(Buffer, commit_space) {
     auto constexpr str_in = std::string_view { "Lorem ipsum dolor sit amet" };
     auto const io = bfy_buffer_reserve_space(&buf, std::size(str_in));
     auto const precommit_space = bfy_buffer_get_space_len(&buf);
-    fprintf(stderr, "precommit space %zu\n", precommit_space);
     EXPECT_NE(nullptr, io.iov_base);
     EXPECT_LE(std::size(str_in), io.iov_len);
     memcpy(io.iov_base, std::data(str_in), std::size(str_in));
