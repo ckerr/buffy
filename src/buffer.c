@@ -243,10 +243,19 @@ bfy_buffer_peek_all(bfy_buffer const* buf, struct bfy_iovec* vec_out, size_t n_v
 }
 
 static struct bfy_iovec
-block_peek(struct bfy_block const* block, size_t n) {
+block_peek_content(struct bfy_block const* block, size_t n) {
     struct bfy_iovec vec = {
         .iov_base = (void*) block_read_cbegin(block),
         .iov_len = size_t_min(n, block_get_readable_size(block))
+    };
+    return vec;
+}
+
+static struct bfy_iovec
+block_peek_space(struct bfy_block const* block) {
+    struct bfy_iovec vec = {
+        .iov_base = (void*) block_write_cbegin(block),
+        .iov_len = block_get_writable_size(block)
     };
     return vec;
 }
@@ -259,7 +268,7 @@ bfy_buffer_peek(bfy_buffer const* buf, size_t len_wanted, struct bfy_iovec* vec_
     struct bfy_block const* it = blocks_cbegin(buf);
     struct bfy_block const* const end = blocks_cend(buf);
     while ((it != end) && (n_left > 0)) {
-        struct bfy_iovec const vec = block_peek(it, n_left);
+        struct bfy_iovec const vec = block_peek_content(it, n_left);
         if (vec.iov_len == 0) {
             break;
         }
@@ -402,7 +411,7 @@ buffer_drain_first_n_blocks(bfy_buffer* buf, size_t n) {
 
 static size_t
 block_drain(struct bfy_block* block, size_t n) {
-    struct bfy_iovec const vec = block_peek(block, n);
+    struct bfy_iovec const vec = block_peek_content(block, n);
     block->read_pos += vec.iov_len;
     return vec.iov_len;
 }
@@ -434,7 +443,7 @@ bfy_buffer_drain(bfy_buffer* buf, size_t len_wanted) {
 
 static size_t
 block_copyout(struct bfy_block const* block, void* data, size_t n_wanted) {
-    struct bfy_iovec const vec = block_peek(block, n_wanted);
+    struct bfy_iovec const vec = block_peek_content(block, n_wanted);
     memcpy(data, vec.iov_base, vec.iov_len);
     return vec.iov_len;
 }
@@ -565,18 +574,7 @@ buffer_append_blocks(bfy_buffer* tgt, struct bfy_block const* new_blocks, size_t
 
 bool
 bfy_buffer_add_buffer(bfy_buffer* buf, bfy_buffer* src) {
-    // copy the blocks
-    struct bfy_block const* const new_blocks = blocks_cbegin(src);
-    size_t const n_new_blocks = blocks_cend(src) - new_blocks;
-    buffer_append_blocks(buf, new_blocks, n_new_blocks);
-
-    // clean up src's block pointers w/o releasing the blocks themselves
-    free (src->blocks);
-    src->blocks = NULL;
-    src->n_blocks = 0;
-    src->block = InitBlock;
-
-    return true;
+    return bfy_buffer_remove_buffer(src, buf, SIZE_MAX);
 }
 
 bool
@@ -603,11 +601,41 @@ bfy_buffer_remove_buffer(bfy_buffer* buf, bfy_buffer* tgt, size_t n_bytes_wanted
     }
 
     // are there any remainder bytes to move over in a new block?
-    if (n_left > 0) {
+    if ((n_left > 0) && buf_has_readable(buf)) {
         struct bfy_block* block = blocks_begin(buf);
         bfy_buffer_add(tgt, block_read_cbegin(block), n_left);
         block_drain(block, n_left);
     }
 
+    return true;
+}
+
+void
+bfy_buffer_add_chain(struct bfy_buffer* buf) {
+    struct bfy_block* block = buffer_get_writable_back(buf);
+    if (block_has_readable(block)) {
+        buffer_append_block(buf);
+    };
+}
+
+struct bfy_iovec
+bfy_buffer_peek_space(struct bfy_buffer* buf) {
+    return block_peek_space(blocks_back(buf));
+}
+
+struct bfy_iovec
+bfy_buffer_reserve_space(struct bfy_buffer* buf, size_t n_wanted) {
+    struct bfy_block* block = buffer_get_writable_back(buf);
+    block_ensure_writable_size(block, n_wanted);
+    return block_peek_space(block);
+}
+
+bool
+bfy_buffer_commit_space(struct bfy_buffer* buf, size_t size) {
+    struct bfy_block* block = buffer_get_writable_back(buf);
+    size_t const n_writable = block_get_writable_size(block);
+    assert (size <= n_writable);
+    size = size_t_min(size, n_writable);
+    block->write_pos += size;
     return true;
 }

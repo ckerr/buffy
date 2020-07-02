@@ -80,6 +80,10 @@ char* bfy_buffer_remove_string(bfy_buffer* buf, size_t* len);
 size_t bfy_buffer_remove(bfy_buffer* buf, void* data, size_t n_wanted);
 size_t bfy_buffer_copyout(bfy_buffer const* buf, void* vdata, size_t n_wanted);
 
+struct bfy_iovec bfy_buffer_peek_space(struct bfy_buffer* buf);
+struct bfy_iovec bfy_buffer_reserve_space(struct bfy_buffer* buf, size_t size);
+bool bfy_buffer_commit_space(struct bfy_buffer* buf, size_t size);
+
 #if 0
 int bfy_buffer_take_string(bfy_buffer* buf, char** str, size_t* strsize);
 void bfy_buffer_clear(bfy_buffer* buf);

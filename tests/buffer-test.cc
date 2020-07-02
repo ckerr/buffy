@@ -805,7 +805,69 @@ TEST(Buffer, remove_nothing_from_empty_buf) {
     bfy_buffer_destruct(&a);
 }
 
+TEST(Buffer, peek_space_with_free_space) {
+    auto array = std::array<char, 64> {};
+    auto buf = bfy_buffer_init_unmanaged(std::data(array), std::size(array));
+    EXPECT_EQ(std::size(array), bfy_buffer_get_writable_size(&buf));
 
+    auto const io = bfy_buffer_peek_space(&buf);
+    EXPECT_EQ(std::data(array), io.iov_base);
+    EXPECT_EQ(std::size(array), io.iov_len);
+
+    bfy_buffer_destruct(&buf);
+}
+
+TEST(Buffer, peek_space_with_readonly) {
+    auto array = std::array<char, 64> {};
+    auto buf = bfy_buffer_init();
+    bfy_buffer_add_readonly(&buf, std::data(array), std::size(array));
+    EXPECT_EQ(1, buffer_count_blocks(&buf));
+
+    auto const io = bfy_buffer_peek_space(&buf);
+    EXPECT_EQ(std::end(array), io.iov_base);
+    EXPECT_EQ(0, io.iov_len);
+
+    bfy_buffer_destruct(&buf);
+}
+
+TEST(Buffer, reserve_space) {
+    auto buf = bfy_buffer_init();
+
+    // confirm that reserve_space() returns data
+    auto const n_wanted = 4096;
+    auto const io = bfy_buffer_reserve_space(&buf, n_wanted);
+    EXPECT_NE(nullptr, io.iov_base);
+    EXPECT_LE(n_wanted, io.iov_len);
+
+    bfy_buffer_destruct(&buf);
+}
+
+TEST(Buffer, commit_space) {
+    // setup pt 1: create a buffer
+    auto buf = bfy_buffer_init();
+    EXPECT_EQ(0, bfy_buffer_get_readable_size(&buf));
+
+    // setup pt 2: reserve space and write into it
+    auto constexpr str_in = std::string_view { "Lorem ipsum dolor sit amet" };
+    auto const io = bfy_buffer_reserve_space(&buf, std::size(str_in));
+    auto const precommit_space = bfy_buffer_get_writable_size(&buf);
+    fprintf(stderr, "precommit space %zu\n", precommit_space);
+    EXPECT_NE(nullptr, io.iov_base);
+    EXPECT_LE(std::size(str_in), io.iov_len);
+    memcpy(io.iov_base, std::data(str_in), std::size(str_in));
+
+    // confirm that the space can be committed
+    EXPECT_TRUE(bfy_buffer_commit_space(&buf, std::size(str_in)));
+
+    // confirm that the committed space is now readable content
+    EXPECT_EQ(std::size(str_in), bfy_buffer_get_readable_size(&buf));
+    EXPECT_EQ(precommit_space - std::size(str_in), bfy_buffer_get_writable_size(&buf));
+    auto* str_out = bfy_buffer_remove_string(&buf, nullptr);
+    EXPECT_EQ(str_in, str_out);
+    free(str_out);
+
+    bfy_buffer_destruct(&buf);
+}
 
 #if 0
 TEST(Buffer, clear) {
