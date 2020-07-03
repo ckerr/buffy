@@ -30,6 +30,9 @@ struct bfy_block {
     size_t write_pos;
 
     int flags;
+
+    bfy_unref_cb* unref_cb;
+    void* unref_arg;
 };
 
 struct bfy_buffer {

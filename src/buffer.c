@@ -142,6 +142,9 @@ block_ensure_writable_size(struct bfy_block* block, size_t desired) {
 
 static void
 block_release(struct bfy_block* block) {
+    if (block->unref_cb != NULL) {
+        block->unref_cb(block->data, block->size, block->unref_arg);
+    }
     if (block_can_realloc(block)) {
         block_realloc(block, 0);
     }
@@ -321,17 +324,35 @@ bfy_buffer_commit_space(struct bfy_buffer* buf, size_t size) {
 /// adders
 
 bool
-bfy_buffer_add_readonly(bfy_buffer* buf, const void* data, size_t size) {
+bfy_buffer_add_readonly(bfy_buffer* buf,
+        const void* data, size_t len) {
     struct bfy_block const block = {
-        .data = (void*)  data,
-        .size = size,
+        .data = (void*) data,
+        .size = len,
         .read_pos = 0,
-        .write_pos = size,
+        .write_pos = len,
         .flags = BFY_BLOCK_FLAGS_READONLY | BFY_BLOCK_FLAGS_UNMANAGED
     };
     *buffer_append_block(buf) = block;
     return true;
 }
+
+bool bfy_buffer_add_reference(bfy_buffer* buf,
+        const void* data, size_t len, 
+        bfy_unref_cb* cb, void* unref_arg) {
+    struct bfy_block const block = {
+        .data = (void*) data,
+        .size = len,
+        .read_pos = 0,
+        .write_pos = len,
+        .flags = BFY_BLOCK_FLAGS_READONLY,
+        .unref_cb = cb,
+        .unref_arg = unref_arg
+    };
+    *buffer_append_block(buf) = block;
+    return true;
+}
+
 
 bool
 bfy_buffer_add(bfy_buffer* buf, const void* data, size_t size) {
@@ -424,6 +445,32 @@ bfy_buffer_reset(bfy_buffer* buf) {
 }
 
 static void
+buffer_forget_first_n_blocks(bfy_buffer* buf, size_t n) {
+    struct bfy_block* const begin = blocks_begin(buf);
+
+    for (struct bfy_block* it=begin, *const end=it+n; it != end; ++it) {
+        *it = InitBlock;
+    }
+
+    if (buf->blocks != NULL) {
+        struct bfy_block const* const end = blocks_cend(buf);
+        if (begin + n < end) {
+            const size_t blocksize = sizeof(struct bfy_block);
+            fprintf(stderr, "blocksize %zu\n", blocksize);
+            fprintf(stderr, "total %zu\n", end-begin);
+            fprintf(stderr, "n_blocks %zu\n", buf->n_blocks);
+            fprintf(stderr, "removing n %zu\n", n);
+            fprintf(stderr, "keeping %zu\n", (end-begin-n));
+            memmove(begin, begin + n, blocksize * (end-begin-n));
+            buf->n_blocks -= n;
+        } else {
+            buf->n_blocks = 1;
+            buf->blocks[0] = InitBlock;
+        }
+    }
+}
+
+static void
 buffer_drain_first_n_blocks(bfy_buffer* buf, size_t n) {
     size_t const total_blocks = blocks_end(buf) - blocks_begin(buf);
     n = size_t_min(n, total_blocks);
@@ -432,20 +479,11 @@ buffer_drain_first_n_blocks(bfy_buffer* buf, size_t n) {
         return;
     }
     
-    block_release(&buf->block);
-    buf->block = InitBlock;
-
     for (struct bfy_block *it=blocks_begin(buf), *end=it+n; it!=end; ++it) {
         block_release(it);
     }
 
-    if (buf->blocks != NULL) {
-        const size_t blocksize = sizeof(struct bfy_block);
-        memmove(buf->blocks, buf->blocks + n, blocksize * (buf->n_blocks -= n));
-        if (buf->n_blocks == 0) {
-            buf->n_blocks = 1;
-        }
-    }
+    buffer_forget_first_n_blocks(buf, n);
 }
 
 static size_t
@@ -616,22 +654,22 @@ bfy_buffer_remove_buffer(bfy_buffer* buf, bfy_buffer* tgt, size_t n_bytes_wanted
 {
     size_t n_left = n_bytes_wanted;
 
-    // see how many blocks get removed as-is
+    // see how many blocks get moved as-is
     // and how many bytes will be left if we need to move half-a-block
-    size_t n_blocks_removed = 0;
+    size_t n_blocks_moved = 0;
     for (struct bfy_block const* it = blocks_cbegin(buf), *end = blocks_cend(buf); it != end; ++it) {
         size_t const n_readable = block_get_readable_size(it);
         if (n_left < n_readable) {
             break;
         }
         n_left -= n_readable;
-        ++n_blocks_removed;
+        ++n_blocks_moved;
     }
 
     // are there any blocks that get moved over completely?
-    if (n_blocks_removed > 0) {
-        buffer_append_blocks(tgt, blocks_cbegin(buf), n_blocks_removed);
-        buffer_drain_first_n_blocks(buf, n_blocks_removed);
+    if (n_blocks_moved > 0) {
+        buffer_append_blocks(tgt, blocks_cbegin(buf), n_blocks_moved);
+        buffer_forget_first_n_blocks(buf, n_blocks_moved);
     }
 
     // are there any remainder bytes to move over in a new block?

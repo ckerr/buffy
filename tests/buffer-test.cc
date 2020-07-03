@@ -898,6 +898,52 @@ TEST(Buffer, reset) {
     bfy_buffer_destruct(&buf);
 }
 
+TEST(Buffer, add_reference) {
+}
+
+TEST(Buffer, add_reference_callback_reached_after_ownership_changed) {
+    auto cb = [](void* data, size_t len, void* vdata) {
+        fprintf(stderr, "in cb\n");
+        auto* iop = reinterpret_cast<bfy_iovec*>(vdata);
+        iop->iov_base = data;
+        iop->iov_len = len;
+    };
+
+    // setup: add the reference to one buffer
+    auto src = bfy_buffer_init();
+    auto constexpr str = std::string_view { "Lorem ipsum dolor sit amet" };
+    auto io = bfy_iovec {};
+    EXPECT_TRUE(bfy_buffer_add_reference(&src, std::data(str), std::size(str), cb, &io));
+    EXPECT_EQ(std::size(str), bfy_buffer_get_content_len(&src));
+
+    // transfer the contents to another buffer
+    auto tgt = bfy_buffer_init();
+    fprintf(stderr, "calling bfy_buffer_add_buffer\n");
+    bfy_buffer_add_buffer(&tgt, &src);
+    fprintf(stderr, "called bfy_buffer_add_buffer\n");
+    EXPECT_EQ(0, bfy_buffer_get_content_len(&src));
+    EXPECT_EQ(std::size(str), bfy_buffer_get_content_len(&tgt));
+
+    // confirm that transfer did not invoke the unref function
+    EXPECT_EQ(0, io.iov_len);
+    EXPECT_EQ(nullptr, io.iov_base);
+
+    // confirm that draining the contents from tgt invokes the callback
+    bfy_buffer_drain(&tgt, SIZE_MAX);
+    EXPECT_EQ(0, bfy_buffer_get_content_len(&tgt));
+    EXPECT_EQ(std::size(str), io.iov_len);
+    EXPECT_EQ(std::data(str), io.iov_base);
+
+    bfy_buffer_destruct(&tgt);
+    bfy_buffer_destruct(&src);
+}
+
+TEST(Buffer, add_reference_callback_reached_in_buffer_dtor) {
+}
+
+
+
+
 #if 0
 TEST(Buffer, clear) {
     BFY_HEAP_BUFFER(buf)

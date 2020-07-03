@@ -28,6 +28,8 @@
 #include <stdbool.h>  // bool
 #include <stddef.h>  // size_t
 
+typedef void (bfy_unref_cb)(void* data, size_t len, void* user_data);
+
 #include <libbuffy/buffer-impl.h>
 
 #ifdef __cplusplus
@@ -54,7 +56,8 @@ size_t bfy_buffer_peek_all(bfy_buffer const* buf, struct bfy_iovec* vec_out, siz
 
 bool bfy_buffer_add(bfy_buffer* buf, void const* addme, size_t n);
 bool bfy_buffer_add_ch(bfy_buffer* buf, char ch);
-bool bfy_buffer_add_readonly(bfy_buffer* buf, const void* data, size_t size);
+bool bfy_buffer_add_readonly(bfy_buffer* buf, const void* data, size_t len);
+bool bfy_buffer_add_reference(bfy_buffer* buf, const void* data, size_t len, bfy_unref_cb* cb, void* user_data);
 bool bfy_buffer_add_printf(bfy_buffer* buf, char const* fmt, ...);
 bool bfy_buffer_add_vprintf(bfy_buffer* buf, char const* fmt, va_list args_in);
 bool bfy_buffer_add_buffer(bfy_buffer* buf, bfy_buffer* src);
