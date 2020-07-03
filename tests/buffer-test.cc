@@ -31,7 +31,6 @@
 #include <type_traits>
 
 #include "libbuffy/buffer.h"
-#include "libbuffy/buffer-endian.h"
 #include "../src/portable-endian.h"
 
 #include "gtest/gtest.h"
@@ -616,7 +615,8 @@ TEST(Buffer, copyout_some) {
 
     // confirm we got what we expected
     EXPECT_EQ(n_expected, n_got);
-    EXPECT_TRUE(std::equal(std::data(array), std::data(array)+n_got, std::data(local.allstrs)));
+    auto const allstrs = local.allstrs;
+    EXPECT_TRUE(std::equal(std::data(array), std::data(array)+n_got, std::data(allstrs)));
 
     // confirm that buffer is unchanged
     EXPECT_EQ(n_readable, bfy_buffer_get_content_len(&local.buf));
@@ -637,7 +637,8 @@ TEST(Buffer, copyout_all) {
 
     // confirm we got what we expected
     EXPECT_EQ(n_expected, n_got);
-    EXPECT_TRUE(std::equal(std::data(array), std::data(array)+n_got, std::data(local.allstrs)));
+    auto const allstrs = local.allstrs;
+    EXPECT_TRUE(std::equal(std::data(array), std::data(array)+n_got, std::data(allstrs)));
 
     // confirm that buffer is unchanged
     EXPECT_EQ(n_readable, bfy_buffer_get_content_len(&local.buf));
@@ -751,8 +752,6 @@ TEST(Buffer, remove_buffer_on_block_boundary) {
 
     auto const pre_blocks_a = buffer_get_blocks(&a.buf);
     auto const pre_blocks_b = buffer_get_blocks(&b.buf);
-    auto const pre_readable_size_a = bfy_buffer_get_content_len(&a.buf);
-    auto const pre_readable_size_b = bfy_buffer_get_content_len(&b.buf);
 
     // remove part of the buffer on what we know is a block boundary
     auto const n_remove = pre_blocks_a.front().iov_len;
@@ -899,11 +898,50 @@ TEST(Buffer, reset) {
 }
 
 TEST(Buffer, add_reference) {
+    auto cb = [](void* data, size_t len, void* vdata) {
+        auto* iop = reinterpret_cast<bfy_iovec*>(vdata);
+        iop->iov_base = data;
+        iop->iov_len = len;
+    };
+
+    // setup: add the reference to the buffer
+    auto buf = bfy_buffer_init();
+    auto constexpr str_in = std::string_view { "Lorem ipsum dolor sit amet" };
+    auto io = bfy_iovec {};
+    EXPECT_TRUE(bfy_buffer_add_reference(&buf, std::data(str_in), std::size(str_in), cb, &io));
+
+    // read remove the buffer's contents into a string
+    auto const str = buffer_remove_string(&buf);
+    EXPECT_EQ(str_in, str);
+
+    // confirm that the callback was invoked
+    EXPECT_EQ(std::data(str_in), io.iov_base);
+    EXPECT_EQ(std::size(str_in), io.iov_len);
+
+    bfy_buffer_destruct(&buf);
+}
+
+TEST(Buffer, add_reference_callback_reached_in_buffer_dtor) {
+    auto cb = [](void* data, size_t len, void* vdata) {
+        auto* iop = reinterpret_cast<bfy_iovec*>(vdata);
+        iop->iov_base = data;
+        iop->iov_len = len;
+    };
+
+    // setup: add the reference to the buffer
+    auto buf = bfy_buffer_init();
+    auto constexpr str = std::string_view { "Lorem ipsum dolor sit amet" };
+    auto io = bfy_iovec {};
+    EXPECT_TRUE(bfy_buffer_add_reference(&buf, std::data(str), std::size(str), cb, &io));
+
+    // confirm that the callback was invoked in the destructor
+    bfy_buffer_destruct(&buf);
+    EXPECT_EQ(std::data(str), io.iov_base);
+    EXPECT_EQ(std::size(str), io.iov_len);
 }
 
 TEST(Buffer, add_reference_callback_reached_after_ownership_changed) {
     auto cb = [](void* data, size_t len, void* vdata) {
-        fprintf(stderr, "in cb\n");
         auto* iop = reinterpret_cast<bfy_iovec*>(vdata);
         iop->iov_base = data;
         iop->iov_len = len;
@@ -937,12 +975,6 @@ TEST(Buffer, add_reference_callback_reached_after_ownership_changed) {
     bfy_buffer_destruct(&tgt);
     bfy_buffer_destruct(&src);
 }
-
-TEST(Buffer, add_reference_callback_reached_in_buffer_dtor) {
-}
-
-
-
 
 #if 0
 TEST(Buffer, clear) {
