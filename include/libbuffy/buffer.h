@@ -29,13 +29,13 @@
 #include <stddef.h>  // size_t
 #include <stdint.h>  // uint8_t, uint16_t, uint32_t, uint64_t
 
-typedef void (bfy_unref_cb)(void* data, size_t len, void* user_data);
-
 #include <libbuffy/buffer-impl.h>
 
 #ifdef __cplusplus
 extern "C" {
 #endif
+
+typedef void (bfy_unref_cb)(void* data, size_t len, void* user_data);
 
 struct bfy_iovec {
     void* iov_base;

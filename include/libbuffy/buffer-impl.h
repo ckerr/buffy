@@ -31,6 +31,7 @@
 extern "C" {
 #endif
 
+
 enum {
     BFY_BLOCK_FLAGS_UNMANAGED = (1<<0),
     BFY_BLOCK_FLAGS_READONLY = (1<<1)
@@ -45,7 +46,7 @@ struct bfy_block {
 
     int flags;
 
-    bfy_unref_cb* unref_cb;
+    void (*unref_cb)(void* data, size_t len, void* user_data);
     void* unref_arg;
 };
 
@@ -53,6 +54,12 @@ struct bfy_buffer {
     struct bfy_block block;
     struct bfy_block* blocks;
     size_t n_blocks;
+};
+
+struct bfy_pos {
+    size_t block_idx;
+    size_t block_pos;
+    size_t content_pos;
 };
 
 #ifdef __cplusplus
