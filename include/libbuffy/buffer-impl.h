@@ -33,11 +33,11 @@ extern "C" {
 
 
 enum {
-    BFY_BLOCK_FLAGS_UNMANAGED = (1<<0),
-    BFY_BLOCK_FLAGS_READONLY = (1<<1)
+    BFY_PAGE_FLAGS_UNMANAGED = (1<<0),
+    BFY_PAGE_FLAGS_READONLY = (1<<1)
 };
 
-struct bfy_block {
+struct bfy_page {
     int8_t* data;
     size_t size;
 
@@ -51,14 +51,14 @@ struct bfy_block {
 };
 
 struct bfy_buffer {
-    struct bfy_block block;
-    struct bfy_block* blocks;
-    size_t n_blocks;
+    struct bfy_page page;
+    struct bfy_page* pages;
+    size_t n_pages;
 };
 
 struct bfy_pos {
-    size_t block_idx;
-    size_t block_pos;
+    size_t page_idx;
+    size_t page_pos;
     size_t content_pos;
 };
 

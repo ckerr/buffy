@@ -62,7 +62,7 @@ bool bfy_buffer_add_reference(bfy_buffer* buf, const void* data, size_t len, bfy
 bool bfy_buffer_add_printf(bfy_buffer* buf, char const* fmt, ...);
 bool bfy_buffer_add_vprintf(bfy_buffer* buf, char const* fmt, va_list args_in);
 bool bfy_buffer_add_buffer(bfy_buffer* buf, bfy_buffer* src);
-bool bfy_buffer_add_chain(struct bfy_buffer* buf);
+bool bfy_buffer_add_pagebreak(struct bfy_buffer* buf);
 bool bfy_buffer_add_hton_u8 (struct bfy_buffer* buf, uint8_t  addme);
 bool bfy_buffer_add_hton_u16(struct bfy_buffer* buf, uint16_t addme);
 bool bfy_buffer_add_hton_u32(struct bfy_buffer* buf, uint32_t addme);
@@ -91,6 +91,15 @@ size_t bfy_buffer_commit_space(struct bfy_buffer* buf, size_t size);
 size_t bfy_buffer_get_space_len(bfy_buffer const* buf);
 bool bfy_buffer_ensure_space(bfy_buffer* buf, size_t size);
 bool bfy_buffer_expand(bfy_buffer* buf, size_t size);
+
+bool bfy_buffer_search(bfy_buffer const* buf,
+                       void const* needle, size_t needle_len,
+                       size_t* match);
+
+bool bfy_buffer_search_range(bfy_buffer const* buf,
+                             size_t begin, size_t end,
+                             void const* needle, size_t needle_len,
+                             size_t* match);
 
 #ifdef __cplusplus
 }

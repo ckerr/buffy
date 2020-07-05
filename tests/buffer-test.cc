@@ -43,12 +43,12 @@ bool operator== (bfy_iovec const& a, struct bfy_iovec const& b) {
 
 namespace {
 
-size_t buffer_count_blocks(bfy_buffer const* buf, size_t n_bytes = SIZE_MAX) {
+size_t buffer_count_pages(bfy_buffer const* buf, size_t n_bytes = SIZE_MAX) {
     return bfy_buffer_peek(buf, n_bytes, nullptr, 0);
 }
 
-auto buffer_get_blocks(bfy_buffer const* buf, size_t n_bytes = SIZE_MAX) {
-    auto const n = buffer_count_blocks(buf, n_bytes);
+auto buffer_get_pages(bfy_buffer const* buf, size_t n_bytes = SIZE_MAX) {
+    auto const n = buffer_count_pages(buf, n_bytes);
     auto vecs = std::vector<struct bfy_iovec>(n);
     bfy_buffer_peek(buf, n_bytes, std::data(vecs), std::size(vecs));
     return vecs;
@@ -155,8 +155,8 @@ TEST(Buffer, add_readonly) {
     EXPECT_EQ(expected_readable_size, bfy_buffer_get_content_len(&buf));
     EXPECT_EQ(0, bfy_buffer_get_space_len(&buf));
 
-    // add another, to test that buffer knows the end block is readonly
-    // and will allocate another block.
+    // add another, to test that buffer knows the end page is readonly
+    // and will allocate another page.
     auto constexpr str2 = std::string_view{"World!"};
     EXPECT_TRUE(bfy_buffer_add_readonly(&buf, std::data(str2), std::size(str2)));
     expected_readable_size += std::size(str2);
@@ -174,11 +174,11 @@ TEST(Buffer, peek) {
     EXPECT_TRUE(bfy_buffer_add_readonly(&buf, std::data(pt1), std::size(pt1)));
     EXPECT_TRUE(bfy_buffer_add_readonly(&buf, std::data(pt2), std::size(pt2)));
 
-    EXPECT_EQ(1, buffer_count_blocks(&buf, std::size(pt1)));
-    EXPECT_EQ(2, buffer_count_blocks(&buf, std::size(pt1)+1));
-    EXPECT_EQ(2, buffer_count_blocks(&buf, std::size(pt1)+std::size(pt2)));
-    EXPECT_EQ(2, buffer_count_blocks(&buf, std::size(pt1)+std::size(pt2)+1));
-    EXPECT_EQ(2, buffer_count_blocks(&buf));
+    EXPECT_EQ(1, buffer_count_pages(&buf, std::size(pt1)));
+    EXPECT_EQ(2, buffer_count_pages(&buf, std::size(pt1)+1));
+    EXPECT_EQ(2, buffer_count_pages(&buf, std::size(pt1)+std::size(pt2)));
+    EXPECT_EQ(2, buffer_count_pages(&buf, std::size(pt1)+std::size(pt2)+1));
+    EXPECT_EQ(2, buffer_count_pages(&buf));
 
     const bfy_iovec JunkVec = {
        .iov_base = reinterpret_cast<void*>(0xBADF00D),
@@ -194,7 +194,7 @@ TEST(Buffer, peek) {
     EXPECT_EQ(JunkVec, vecs[1]);
 
     // test that a single-vec peek with a null iovec works
-    EXPECT_EQ(1, buffer_count_blocks(&buf, std::size(pt1)));
+    EXPECT_EQ(1, buffer_count_pages(&buf, std::size(pt1)));
 
     // test that a multivec peek works
     std::fill(std::begin(vecs), std::end(vecs), JunkVec);
@@ -206,7 +206,7 @@ TEST(Buffer, peek) {
     EXPECT_EQ(JunkVec, vecs[2]);
 
     // test that a multivec peek with a null iovec works
-    EXPECT_TRUE(buffer_count_blocks(&buf, std::size(pt1)));
+    EXPECT_TRUE(buffer_count_pages(&buf, std::size(pt1)));
 
     // test that the number extents needed is returned
     // even if it's greater than the number of extents passed in
@@ -225,7 +225,7 @@ TEST(Buffer, add) {
     char constexpr ch = 'y';
     EXPECT_TRUE(bfy_buffer_add_ch(&buf, ch));
     EXPECT_EQ(1, bfy_buffer_get_content_len(&buf));
-    EXPECT_EQ(1, buffer_count_blocks(&buf));
+    EXPECT_EQ(1, buffer_count_pages(&buf));
 
     bfy_buffer_destruct(&buf);
 }
@@ -264,7 +264,7 @@ TEST(Buffer, add_printf) {
 
     // printf into the buffer
     EXPECT_TRUE(bfy_buffer_add_printf(&local.buf, "%s, %s!", "Hello", "World"));
-    EXPECT_EQ(1, buffer_count_blocks(&local.buf));
+    EXPECT_EQ(1, buffer_count_pages(&local.buf));
 
     // confirm that the string was written into the memory used by the buffer
     auto constexpr expected = std::string_view { "Hello, World!" };
@@ -284,13 +284,13 @@ TEST(Buffer, add_printf_when_not_enough_space) {
     EXPECT_EQ(expected, buffer_remove_string(&local.buf));
 }
 
-TEST(Buffer, make_contiguous_when_only_one_block) {
+TEST(Buffer, make_contiguous_when_only_one_page) {
     BufferWithLocalArray<64> local;
 
     auto constexpr str1 = std::string_view { "General" };
     bfy_buffer_add(&local.buf, std::data(str1), std::size(str1));
 
-    // confirm adding str1 fit inside the existing block
+    // confirm adding str1 fit inside the existing page
     auto constexpr n_expected_vecs = 1;
     auto vecs1 = std::array<bfy_iovec, n_expected_vecs>{};
     EXPECT_EQ(n_expected_vecs, bfy_buffer_peek_all(&local.buf, std::data(vecs1), std::size(vecs1)));
@@ -298,7 +298,7 @@ TEST(Buffer, make_contiguous_when_only_one_block) {
     EXPECT_EQ(std::size(str1), vecs1[0].iov_len);
 
     // confirm that making contiguous changes nothing
-    // because it was already a single block
+    // because it was already a single page
     auto* rv = bfy_buffer_make_all_contiguous(&local.buf);
     auto vecs2 = std::array<bfy_iovec, n_expected_vecs>{};
     EXPECT_EQ(n_expected_vecs, bfy_buffer_peek_all(&local.buf, std::data(vecs2), std::size(vecs2)));
@@ -319,69 +319,69 @@ auto constexpr strs = std::array<std::string_view, 3> { str1, str2, str3 };
 }  // anonymous namespace
 
 TEST(Buffer, make_contiguous_when_small_request) {
-    auto constexpr n_blocks_in = 2;
+    auto constexpr n_pages_in = 2;
     auto constexpr begin = std::begin(strs);
-    auto constexpr end = begin + n_blocks_in;
+    auto constexpr end = begin + n_pages_in;
 
-    // build a buffer that holds two read-only blocks
+    // build a buffer that holds two read-only pages
     auto buf = bfy_buffer_init();
     auto const action = [&buf](auto const& str){bfy_buffer_add_readonly(&buf, std::data(str), std::size(str));};
     std::for_each(begin, end, action);
     auto const n_readable = bfy_buffer_get_content_len(&buf);
     auto const acc = [](auto& acc, auto const& str){return acc + std::size(str);};
     auto const n_expected_readable = std::accumulate(begin, end, size_t{}, acc);
-    EXPECT_EQ(n_blocks_in, buffer_count_blocks(&buf));
+    EXPECT_EQ(n_pages_in, buffer_count_pages(&buf));
     EXPECT_EQ(n_expected_readable, n_readable);
 
-    // confirm that nothing happens when you request a block
+    // confirm that nothing happens when you request a page
     // that is already contiguous
     auto constexpr n_contiguous = std::size(strs.front());
     for (int i=0; i < n_contiguous; ++i) {
         auto const* rv = bfy_buffer_make_contiguous(&buf, n_contiguous);
         EXPECT_EQ(rv, std::data(strs.front()));
-        EXPECT_EQ(n_blocks_in, buffer_count_blocks(&buf));
+        EXPECT_EQ(n_pages_in, buffer_count_pages(&buf));
         EXPECT_EQ(n_expected_readable, bfy_buffer_get_content_len(&buf));
     }
 
     bfy_buffer_destruct(&buf);
 }
 
-TEST(Buffer, make_contiguous_when_readonly_blocks) {
-    auto constexpr n_blocks_in = 2;
+TEST(Buffer, make_contiguous_when_readonly_pages) {
+    auto constexpr n_pages_in = 2;
     auto constexpr begin = std::begin(strs);
-    auto constexpr end = begin + n_blocks_in;
+    auto constexpr end = begin + n_pages_in;
 
-    // setup: build a block with some read-only blocks
+    // setup: build a page with some read-only pages
     auto buf = bfy_buffer_init();
     auto const action = [&buf](auto const& str){bfy_buffer_add_readonly(&buf, std::data(str), std::size(str));};
     std::for_each(begin, end, action);
     auto const n_readable = bfy_buffer_get_content_len(&buf);
     auto const n_expected_readable = std::accumulate(begin, end, size_t{}, [](auto& acc, auto const& str){return acc + std::size(str);});
     EXPECT_EQ(n_expected_readable, n_readable);
-    EXPECT_EQ(n_blocks_in, buffer_count_blocks(&buf));
+    EXPECT_EQ(n_pages_in, buffer_count_pages(&buf));
 
-    // confirm that make_contiguous put 'em in one block
+    // confirm that make_contiguous put 'em in one page
     auto const* rv = bfy_buffer_make_all_contiguous(&buf);
-    EXPECT_EQ(1, buffer_count_blocks(&buf));
+    EXPECT_EQ(1, buffer_count_pages(&buf));
     EXPECT_EQ(n_expected_readable, bfy_buffer_get_content_len(&buf));
     std::for_each(begin, end, [this, rv](auto const& str){ EXPECT_NE(std::data(str), rv); });
 
     bfy_buffer_destruct(&buf);
 }
 
-TEST(Buffer, make_contiguous_when_aligned_with_block) {
+TEST(Buffer, make_contiguous_when_aligned_with_page) {
     BufferWithReadonlyStrings local;
     auto const n_expected_readable = std::size(local.allstrs);
-    auto constexpr n_blocks_in = std::size(local.strs);
+    auto constexpr n_pages_in = std::size(local.strs);
     EXPECT_EQ(n_expected_readable, bfy_buffer_get_content_len(&local.buf));
-    EXPECT_EQ(n_blocks_in, buffer_count_blocks(&local.buf));
+    EXPECT_EQ(n_pages_in, buffer_count_pages(&local.buf));
 
-    // try to make the first two blocks contiguous
-    auto constexpr n_expected_vecs = n_blocks_in - 1;
+    // try to make the first two pages contiguous
+    auto constexpr n_expected_vecs = n_pages_in - 1;
     auto const n_bytes_contiguous = n_expected_readable - std::size(strs.back());
     bfy_buffer_make_contiguous(&local.buf, n_bytes_contiguous);
 
-    // test that the blocks look right
+    // test that the pages look right
     auto vecs = std::array<bfy_iovec, n_expected_vecs>{};
     EXPECT_EQ(n_expected_vecs, bfy_buffer_peek_all(&local.buf, std::data(vecs), n_expected_vecs));
     EXPECT_EQ(n_bytes_contiguous, vecs[0].iov_len);
@@ -391,19 +391,19 @@ TEST(Buffer, make_contiguous_when_aligned_with_block) {
     EXPECT_EQ(n_expected_readable, bfy_buffer_get_content_len(&local.buf));
 }
 
-TEST(Buffer, make_contiguous_when_not_aligned_with_block) {
+TEST(Buffer, make_contiguous_when_not_aligned_with_page) {
     BufferWithReadonlyStrings local;
     auto const n_expected_readable = std::size(local.allstrs);
-    auto constexpr n_blocks_in = std::size(local.strs);
+    auto constexpr n_pages_in = std::size(local.strs);
     EXPECT_EQ(n_expected_readable, bfy_buffer_get_content_len(&local.buf));
-    EXPECT_EQ(n_blocks_in, buffer_count_blocks(&local.buf));
+    EXPECT_EQ(n_pages_in, buffer_count_pages(&local.buf));
 
-    // try to make 2-and-some blocks contiguous
+    // try to make 2-and-some pages contiguous
     auto constexpr n_expected_vecs = 2;
     auto const n_bytes_contiguous = n_expected_readable - 1;
     bfy_buffer_make_contiguous(&local.buf, n_bytes_contiguous);
 
-    // test that the blocks look right
+    // test that the pages look right
     auto vecs = std::array<bfy_iovec, n_expected_vecs>{};
     EXPECT_EQ(n_expected_vecs, bfy_buffer_peek_all(&local.buf, std::data(vecs), n_expected_vecs));
     EXPECT_EQ(n_bytes_contiguous, vecs[0].iov_len);
@@ -442,16 +442,16 @@ TEST(Buffer, ensure_writable_when_readonly) {
     bfy_buffer_destruct(&buf);
 }
 
-TEST(Buffer, drain_on_block_boundary) {
-    // setup: build a buffer with two blocks
+TEST(Buffer, drain_on_page_boundary) {
+    // setup: build a buffer with two pages
     auto buf = bfy_buffer_init();
     bfy_buffer_add_readonly(&buf, std::data(str1), std::size(str1));
     bfy_buffer_add_readonly(&buf, std::data(str2), std::size(str2));
-    EXPECT_EQ(2, buffer_count_blocks(&buf));
+    EXPECT_EQ(2, buffer_count_pages(&buf));
     EXPECT_EQ(0, bfy_buffer_get_space_len(&buf));
     EXPECT_EQ(std::size(str1) + std::size(str2), bfy_buffer_get_content_len(&buf));
 
-    // drain the first block -- the second one should remain
+    // drain the first page -- the second one should remain
     EXPECT_TRUE(bfy_buffer_drain(&buf, std::size(str1)));
     auto constexpr n_expected_vecs = 1;
     auto vecs = std::array<bfy_iovec, n_expected_vecs>{};
@@ -464,23 +464,23 @@ TEST(Buffer, drain_on_block_boundary) {
     bfy_buffer_destruct(&buf);
 }
 
-TEST(Buffer, drain_part_of_first_block) {
-    // setup: build a buffer with two blocks
+TEST(Buffer, drain_part_of_first_page) {
+    // setup: build a buffer with two pages
     auto buf = bfy_buffer_init();
     bfy_buffer_add_readonly(&buf, std::data(str1), std::size(str1));
     bfy_buffer_add_readonly(&buf, std::data(str2), std::size(str2));
-    EXPECT_EQ(2, buffer_count_blocks(&buf));
+    EXPECT_EQ(2, buffer_count_pages(&buf));
     auto expected_readable_size = std::size(str1) + std::size(str2);
     auto constexpr expected_writable_size = 0;
     EXPECT_EQ(expected_readable_size, bfy_buffer_get_content_len(&buf));
     EXPECT_EQ(expected_writable_size, bfy_buffer_get_space_len(&buf));
 
-    // drain _part_ of the first block
+    // drain _part_ of the first page
     auto constexpr n_drain = std::size(str1) / 2;
     EXPECT_TRUE(bfy_buffer_drain(&buf, n_drain));
     expected_readable_size -= n_drain;
 
-    // part of the first block and all of the last block should remain
+    // part of the first page and all of the last page should remain
     auto constexpr n_expected_vecs = 2;
     auto vecs = std::array<bfy_iovec, n_expected_vecs>{};
     EXPECT_EQ(n_expected_vecs, bfy_buffer_peek_all(&buf, std::data(vecs), std::size(vecs)));
@@ -495,7 +495,7 @@ TEST(Buffer, drain_part_of_first_block) {
 }
 
 TEST(Buffer, drain_zero) {
-    // setup: build a buffer with two blocks
+    // setup: build a buffer with two pages
     auto buf = bfy_buffer_init();
     bfy_buffer_add_readonly(&buf, std::data(str1), std::size(str1));
     bfy_buffer_add_readonly(&buf, std::data(str2), std::size(str2));
@@ -524,7 +524,7 @@ TEST(Buffer, drain_zero) {
 TEST(Buffer, drain_empty_buffer) {
     // setup: build an empty buffer
     auto buf = bfy_buffer_init();
-    EXPECT_EQ(0, buffer_count_blocks(&buf));
+    EXPECT_EQ(0, buffer_count_pages(&buf));
     EXPECT_EQ(0, bfy_buffer_get_content_len(&buf));
     EXPECT_EQ(0, bfy_buffer_get_space_len(&buf));
 
@@ -532,7 +532,7 @@ TEST(Buffer, drain_empty_buffer) {
     EXPECT_TRUE(bfy_buffer_drain(&buf, bfy_buffer_drain(&buf, 128)));
 
     // confirm that nothing changed
-    EXPECT_EQ(0, buffer_count_blocks(&buf));
+    EXPECT_EQ(0, buffer_count_pages(&buf));
     EXPECT_EQ(0, bfy_buffer_get_content_len(&buf));
     EXPECT_EQ(0, bfy_buffer_get_space_len(&buf));
 
@@ -540,7 +540,7 @@ TEST(Buffer, drain_empty_buffer) {
     bfy_buffer_destruct(&buf);
 }
 TEST(Buffer, drain_too_much) {
-    // setup: build a buffer with two blocks
+    // setup: build a buffer with two pages
     auto buf = bfy_buffer_init();
     bfy_buffer_add_readonly(&buf, std::data(str1), std::size(str1));
     bfy_buffer_add_readonly(&buf, std::data(str2), std::size(str2));
@@ -556,7 +556,7 @@ TEST(Buffer, drain_too_much) {
     EXPECT_TRUE(bfy_buffer_drain(&buf, n_expected_readable * 2));
 
     // confirm that the buffer is empty
-    EXPECT_EQ(0, buffer_count_blocks(&buf));
+    EXPECT_EQ(0, buffer_count_pages(&buf));
     EXPECT_EQ(0, bfy_buffer_get_content_len(&buf));
     EXPECT_EQ(0, bfy_buffer_get_space_len(&buf));
 
@@ -606,7 +606,7 @@ TEST(Buffer, copyout_some) {
     auto local = BufferWithReadonlyStrings {};
     auto const n_readable = bfy_buffer_get_content_len(&local.buf);
     auto const n_writable = bfy_buffer_get_space_len(&local.buf);
-    auto const n_blocks = buffer_count_blocks(&local.buf);
+    auto const n_pages = buffer_count_pages(&local.buf);
 
     // copy out some of it
     auto array = std::array<char, 128>{};
@@ -621,14 +621,14 @@ TEST(Buffer, copyout_some) {
     // confirm that buffer is unchanged
     EXPECT_EQ(n_readable, bfy_buffer_get_content_len(&local.buf));
     EXPECT_EQ(n_writable, bfy_buffer_get_space_len(&local.buf));
-    EXPECT_EQ(n_blocks, buffer_count_blocks(&local.buf));
+    EXPECT_EQ(n_pages, buffer_count_pages(&local.buf));
 }
 
 TEST(Buffer, copyout_all) {
     auto local = BufferWithReadonlyStrings {};
     auto const n_readable = bfy_buffer_get_content_len(&local.buf);
     auto const n_writable = bfy_buffer_get_space_len(&local.buf);
-    auto const n_blocks = buffer_count_blocks(&local.buf);
+    auto const n_pages = buffer_count_pages(&local.buf);
 
     // copy out some of it
     auto array = std::array<char, 128>{};
@@ -643,14 +643,14 @@ TEST(Buffer, copyout_all) {
     // confirm that buffer is unchanged
     EXPECT_EQ(n_readable, bfy_buffer_get_content_len(&local.buf));
     EXPECT_EQ(n_writable, bfy_buffer_get_space_len(&local.buf));
-    EXPECT_EQ(n_blocks, buffer_count_blocks(&local.buf));
+    EXPECT_EQ(n_pages, buffer_count_pages(&local.buf));
 }
 
 TEST(Buffer, copyout_none) {
     auto local = BufferWithReadonlyStrings {};
     auto const n_readable = bfy_buffer_get_content_len(&local.buf);
     auto const n_writable = bfy_buffer_get_space_len(&local.buf);
-    auto const n_blocks = buffer_count_blocks(&local.buf);
+    auto const n_pages = buffer_count_pages(&local.buf);
 
     // copy out some of it
     auto array = std::array<char, 64>{};
@@ -663,7 +663,7 @@ TEST(Buffer, copyout_none) {
     // confirm that buffer is unchanged
     EXPECT_EQ(n_readable, bfy_buffer_get_content_len(&local.buf));
     EXPECT_EQ(n_writable, bfy_buffer_get_space_len(&local.buf));
-    EXPECT_EQ(n_blocks, buffer_count_blocks(&local.buf));
+    EXPECT_EQ(n_pages, buffer_count_pages(&local.buf));
 }
 
 /// hton, ntoh functions
@@ -704,7 +704,7 @@ TEST(Buffer, endian_64) {
 TEST(Buffer, add_buffer) {
     auto a = BufferWithReadonlyStrings {};
     auto b = BufferWithReadonlyStrings {};
-    auto const n_expected_vecs = buffer_count_blocks(&a.buf) + buffer_count_blocks(&b.buf);
+    auto const n_expected_vecs = buffer_count_pages(&a.buf) + buffer_count_pages(&b.buf);
     auto const expected_size = std::size(a.allstrs) + std::size(b.allstrs);
 
     auto buf = bfy_buffer_init();
@@ -723,11 +723,11 @@ TEST(Buffer, add_empty_buffer) {
     auto a = BufferWithReadonlyStrings {};
     auto buf = bfy_buffer_init();
 
-    auto const pre_blocks_a = buffer_get_blocks(&a.buf);
-    auto const pre_blocks_b = buffer_get_blocks(&buf);
+    auto const pre_pages_a = buffer_get_pages(&a.buf);
+    auto const pre_pages_b = buffer_get_pages(&buf);
     EXPECT_TRUE(bfy_buffer_add_buffer(&a.buf, &buf));
-    EXPECT_EQ(pre_blocks_a, buffer_get_blocks(&a.buf));
-    EXPECT_EQ(pre_blocks_b, buffer_get_blocks(&buf));
+    EXPECT_EQ(pre_pages_a, buffer_get_pages(&a.buf));
+    EXPECT_EQ(pre_pages_b, buffer_get_pages(&buf));
 
     bfy_buffer_destruct(&buf);
 }
@@ -736,48 +736,48 @@ TEST(Buffer, remove_empty_buffer) {
     auto a = BufferWithReadonlyStrings {};
     auto buf = bfy_buffer_init();
 
-    auto const pre_blocks_a = buffer_get_blocks(&a.buf);
-    auto const pre_blocks_b = buffer_get_blocks(&buf);
+    auto const pre_pages_a = buffer_get_pages(&a.buf);
+    auto const pre_pages_b = buffer_get_pages(&buf);
 
     EXPECT_TRUE(bfy_buffer_remove_buffer(&a.buf, &buf, 0));
-    EXPECT_EQ(pre_blocks_a, buffer_get_blocks(&a.buf));
-    EXPECT_EQ(pre_blocks_b, buffer_get_blocks(&buf));
+    EXPECT_EQ(pre_pages_a, buffer_get_pages(&a.buf));
+    EXPECT_EQ(pre_pages_b, buffer_get_pages(&buf));
 
     bfy_buffer_destruct(&buf);
 }
 
-TEST(Buffer, remove_buffer_on_block_boundary) {
+TEST(Buffer, remove_buffer_on_page_boundary) {
     auto a = BufferWithReadonlyStrings {};
     auto b = BufferWithReadonlyStrings {};
 
-    auto const pre_blocks_a = buffer_get_blocks(&a.buf);
-    auto const pre_blocks_b = buffer_get_blocks(&b.buf);
+    auto const pre_pages_a = buffer_get_pages(&a.buf);
+    auto const pre_pages_b = buffer_get_pages(&b.buf);
 
-    // remove part of the buffer on what we know is a block boundary
-    auto const n_remove = pre_blocks_a.front().iov_len;
+    // remove part of the buffer on what we know is a page boundary
+    auto const n_remove = pre_pages_a.front().iov_len;
     EXPECT_TRUE(bfy_buffer_remove_buffer(&a.buf, &b.buf, n_remove));
 
-    // confirm that the block was just moved over verbatim
-    auto expected_blocks_a = std::vector<bfy_iovec> { pre_blocks_a };
-    auto expected_blocks_b = std::vector<bfy_iovec> { pre_blocks_b };
-    expected_blocks_b.insert(std::end(expected_blocks_b), expected_blocks_a.front());
-    expected_blocks_a.erase(std::begin(expected_blocks_a));
-    EXPECT_EQ(expected_blocks_a, buffer_get_blocks(&a.buf));
-    EXPECT_EQ(expected_blocks_b, buffer_get_blocks(&b.buf));
+    // confirm that the page was just moved over verbatim
+    auto expected_pages_a = std::vector<bfy_iovec> { pre_pages_a };
+    auto expected_pages_b = std::vector<bfy_iovec> { pre_pages_b };
+    expected_pages_b.insert(std::end(expected_pages_b), expected_pages_a.front());
+    expected_pages_a.erase(std::begin(expected_pages_a));
+    EXPECT_EQ(expected_pages_a, buffer_get_pages(&a.buf));
+    EXPECT_EQ(expected_pages_b, buffer_get_pages(&b.buf));
 }
 
-TEST(Buffer, remove_part_of_first_block) {
+TEST(Buffer, remove_part_of_first_page) {
     auto a = BufferWithReadonlyStrings {};
     auto buf = bfy_buffer_init();
 
     auto const pre_contents_a = buffer_copyout(&a.buf);
     auto const pre_contents_b = buffer_copyout(&buf);
-    auto const pre_blocks_a = buffer_get_blocks(&a.buf);
-    auto const pre_blocks_b = buffer_get_blocks(&buf);
+    auto const pre_pages_a = buffer_get_pages(&a.buf);
+    auto const pre_pages_b = buffer_get_pages(&buf);
 
     // remove half of the first buffer so that we know we're
-    // forcing a block to be split in half
-    auto const n_remove = pre_blocks_a.front().iov_len / 2;
+    // forcing a page to be split in half
+    auto const n_remove = pre_pages_a.front().iov_len / 2;
     EXPECT_TRUE(bfy_buffer_remove_buffer(&a.buf, &buf, n_remove));
 
     // confirm that each buffer's contents are what we expect
@@ -788,9 +788,9 @@ TEST(Buffer, remove_part_of_first_block) {
     EXPECT_EQ(expected_contents_a, buffer_copyout(&a.buf));
     EXPECT_EQ(expected_contents_b, buffer_copyout(&buf));
 
-    // confirm that the target buffer got a single new block
-    EXPECT_EQ(std::size(pre_blocks_a), buffer_count_blocks(&a.buf));
-    EXPECT_EQ(std::size(pre_blocks_b) + 1, buffer_count_blocks(&buf));
+    // confirm that the target buffer got a single new page
+    EXPECT_EQ(std::size(pre_pages_a), buffer_count_pages(&a.buf));
+    EXPECT_EQ(std::size(pre_pages_b) + 1, buffer_count_pages(&buf));
 
     bfy_buffer_destruct(&buf);
 }
@@ -803,8 +803,8 @@ TEST(Buffer, remove_nothing_from_empty_buf) {
     // take a snapshot of the precondition state
     auto const pre_contents_a = buffer_copyout(&a);
     auto const pre_contents_b = buffer_copyout(&b);
-    auto const pre_blocks_a = buffer_get_blocks(&a);
-    auto const pre_blocks_b = buffer_get_blocks(&b);
+    auto const pre_pages_a = buffer_get_pages(&a);
+    auto const pre_pages_b = buffer_get_pages(&b);
 
     // remove nothing
     EXPECT_TRUE(bfy_buffer_remove_buffer(&a, &b, 0));
@@ -812,8 +812,8 @@ TEST(Buffer, remove_nothing_from_empty_buf) {
     // confirm that nothing changed
     EXPECT_EQ(pre_contents_a, buffer_copyout(&a));
     EXPECT_EQ(pre_contents_b, buffer_copyout(&b));
-    EXPECT_EQ(pre_blocks_a, buffer_get_blocks(&a));
-    EXPECT_EQ(pre_blocks_b, buffer_get_blocks(&b));
+    EXPECT_EQ(pre_pages_a, buffer_get_pages(&a));
+    EXPECT_EQ(pre_pages_b, buffer_get_pages(&b));
 
     // cleanup
     bfy_buffer_destruct(&b);
@@ -836,7 +836,7 @@ TEST(Buffer, peek_space_with_readonly) {
     auto array = std::array<char, 64> {};
     auto buf = bfy_buffer_init();
     bfy_buffer_add_readonly(&buf, std::data(array), std::size(array));
-    EXPECT_EQ(1, buffer_count_blocks(&buf));
+    EXPECT_EQ(1, buffer_count_pages(&buf));
 
     auto const io = bfy_buffer_peek_space(&buf);
     EXPECT_EQ(std::end(array), io.iov_base);
@@ -976,17 +976,120 @@ TEST(Buffer, add_reference_callback_reached_after_ownership_changed) {
     bfy_buffer_destruct(&src);
 }
 
-#if 0
-TEST(Buffer, clear) {
-    BFY_HEAP_BUFFER(buf)
+TEST(Buffer, search_not_present) {
+    BufferWithReadonlyStrings local;
+    auto constexpr expected_pos = size_t { 999 };
+    auto constexpr needle = std::string_view { "test" };
+    auto pos = expected_pos;
 
-    std::string const in = "1234567890";
-    bfy_buffer_add(&buf, in.data(), in.length());
-    EXPECT_EQ(in.length(), bfy_buffer_get_content_len(&buf));
+    // confirm that the search fails and pos is unchanged
+    EXPECT_FALSE(bfy_buffer_search(&local.buf, std::data(needle), std::size(needle), &pos));
+    EXPECT_EQ(expected_pos, pos);
+}
 
-    bfy_buffer_clear(&buf);
-    EXPECT_EQ(0, bfy_buffer_get_content_len(&buf));
+TEST(Buffer, search_only_matches_before_range) {
+    BufferWithReadonlyStrings local;
+    auto const needle = local.str1;
+    auto constexpr expected_pos = size_t { 999 };
+    auto pos = expected_pos;
+
+    EXPECT_FALSE(bfy_buffer_search_range(&local.buf,
+                                         1, SIZE_MAX,
+                                         std::data(needle), std::size(needle),
+                                         &pos));
+    EXPECT_EQ(expected_pos, pos);
+}
+
+TEST(Buffer, search_only_matches_after_range) {
+    BufferWithReadonlyStrings local;
+    auto const needle = local.str3;
+    auto constexpr expected_pos = size_t { 999 };
+    auto pos = expected_pos;
+
+    EXPECT_FALSE(bfy_buffer_search_range(&local.buf,
+                                         0, std::size(local.allstrs) - 1,
+                                         std::data(needle), std::size(needle),
+                                         &pos));
+    EXPECT_EQ(expected_pos, pos);
+}
+
+TEST(Buffer, search_match_in_first_page) {
+    BufferWithReadonlyStrings local;
+
+    size_t constexpr skip = 1;
+    auto constexpr needle = local.str1.substr(1);
+    auto pos = size_t {};
+
+    EXPECT_TRUE(bfy_buffer_search(&local.buf, std::data(needle), std::size(needle), &pos));
+    EXPECT_EQ(skip, pos);
+}
+
+TEST(Buffer, search_match_crossing_pages) {
+    BufferWithReadonlyStrings local;
+
+    size_t constexpr skip = 1;
+    auto needle = std::string {};
+    needle += local.str1.substr(skip);
+    needle += local.str2.substr(0, std::size(local.str2)-1);
+    auto pos = size_t {};
+
+    EXPECT_TRUE(bfy_buffer_search(&local.buf, std::data(needle), std::size(needle), &pos));
+    EXPECT_EQ(skip, pos);
+}
+
+TEST(Buffer, search_match_crossing_multiple_pages) {
+    BufferWithReadonlyStrings local;
+
+    size_t constexpr skip = 1;
+    auto needle = std::string {};
+    needle += local.str1.substr(skip);
+    needle += local.str2;
+    needle += local.str3.substr(0, std::size(local.str3)-1);
+    auto pos = size_t {};
+
+    EXPECT_TRUE(bfy_buffer_search(&local.buf, std::data(needle), std::size(needle), &pos));
+    EXPECT_EQ(skip, pos);
+}
+
+TEST(Buffer, search_match_at_end) {
+    BufferWithReadonlyStrings local;
+
+    auto needle = std::string {};
+    needle += local.str2.substr(std::size(local.str2) - 1);;
+    needle += local.str3;
+    auto pos = size_t {};
+
+    EXPECT_TRUE(bfy_buffer_search(&local.buf, std::data(needle), std::size(needle), &pos));
+    EXPECT_EQ(bfy_buffer_get_content_len(&local.buf) - std::size(needle), pos);
+}
+
+TEST(Buffer, search_almost_match_at_end) {
+    BufferWithReadonlyStrings local;
+
+    auto needle = std::string {};
+    needle += local.str3;
+    needle += "but this part is missing";
+    auto pos = size_t {};
+
+    EXPECT_FALSE(bfy_buffer_search(&local.buf, std::data(needle), std::size(needle), &pos));
+}
+
+TEST(Buffer, search_almost_match_at_page_break) {
+    auto constexpr str1 = std::string_view { "The Beat" };
+    auto constexpr str2 = std::string_view { " were not the same band as T" };
+    auto constexpr str3 = std::string_view { "he Beatles" };
+
+    auto buf = bfy_buffer_init();
+    bfy_buffer_add_readonly(&buf, std::data(str1), std::size(str1));
+    bfy_buffer_add_readonly(&buf, std::data(str2), std::size(str2));
+    bfy_buffer_add_readonly(&buf, std::data(str3), std::size(str3));
+
+    auto constexpr needle = std::string_view { "The Beatles" };
+    auto constexpr expected_pos = std::size(str1) + std::size(str2) - 1;
+    auto pos = size_t {};
+
+    EXPECT_TRUE(bfy_buffer_search(&buf, std::data(needle), std::size(needle), &pos));
+    EXPECT_EQ(expected_pos, pos);
 
     bfy_buffer_destruct(&buf);
 }
-#endif

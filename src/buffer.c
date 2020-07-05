@@ -35,78 +35,74 @@ size_t_min(size_t a, size_t b) {
     return a < b ? a : b;
 }
 
-/// block utils
+/// page utils
 
-static struct bfy_block const InitBlock = { 0 };
+static struct bfy_page const InitPage = { 0 };
 
-static struct bfy_block*
-blocks_begin(bfy_buffer* buf) {
-    return buf->blocks == NULL ? &buf->block : buf->blocks;
+static struct bfy_page*
+pages_begin(bfy_buffer* buf) {
+    return buf->pages == NULL ? &buf->page : buf->pages;
 }
-static struct bfy_block const*
-blocks_cbegin(bfy_buffer const* buf) {
-    return buf->blocks == NULL ? &buf->block : buf->blocks;
+static struct bfy_page const*
+pages_cbegin(bfy_buffer const* buf) {
+    return buf->pages == NULL ? &buf->page : buf->pages;
 }
-static struct bfy_block*
-blocks_end(bfy_buffer* buf) {
-    return buf->blocks == NULL ? &buf->block + 1 : buf->blocks + buf->n_blocks;
+static struct bfy_page const*
+pages_cend(bfy_buffer const* buf) {
+    return buf->pages == NULL ? &buf->page + 1 : buf->pages + buf->n_pages;
 }
-static struct bfy_block const*
-blocks_cend(bfy_buffer const* buf) {
-    return buf->blocks == NULL ? &buf->block + 1 : buf->blocks + buf->n_blocks;
+static struct bfy_page*
+pages_back(bfy_buffer* buf) {
+    return buf->pages == NULL ? &buf->page : buf->pages + buf->n_pages - 1;
 }
-static struct bfy_block*
-blocks_back(bfy_buffer* buf) {
-    return buf->blocks == NULL ? &buf->block : buf->blocks + buf->n_blocks - 1;
-}
-static struct bfy_block const*
-blocks_cback(bfy_buffer const* buf) {
-    return buf->blocks == NULL ? &buf->block : buf->blocks + buf->n_blocks - 1;
+static struct bfy_page const*
+pages_cback(bfy_buffer const* buf) {
+    return buf->pages == NULL ? &buf->page : buf->pages + buf->n_pages - 1;
 }
 static bool
-block_can_realloc(struct bfy_block const* block) {
-    return (block->flags & (BFY_BLOCK_FLAGS_READONLY | BFY_BLOCK_FLAGS_UNMANAGED)) == 0;
+page_can_realloc(struct bfy_page const* page) {
+    return (page->flags & (BFY_PAGE_FLAGS_READONLY | BFY_PAGE_FLAGS_UNMANAGED)) == 0;
 }
 static bool
-block_is_writable(struct bfy_block const* block) {
-    return (block->flags & BFY_BLOCK_FLAGS_READONLY) == 0;
+page_is_writable(struct bfy_page const* page) {
+    return (page->flags & BFY_PAGE_FLAGS_READONLY) == 0;
 }
 static bool
-block_is_recyclable(struct bfy_block const* block) {
-    return block_is_writable(block);
+page_is_recyclable(struct bfy_page const* page) {
+    return page_is_writable(page);
 }
 static bool
-block_has_readable(struct bfy_block const* block) {
-    return block->write_pos > block->read_pos;
+page_has_readable(struct bfy_page const* page) {
+    return page->write_pos > page->read_pos;
 }
 
 static void*
-block_read_begin(struct bfy_block* block) {
-    return block->data + block->read_pos;
+page_read_begin(struct bfy_page* page) {
+    return page->data + page->read_pos;
 }
 static const void*
-block_read_cbegin(struct bfy_block const* block) {
-    return block->data + block->read_pos;
+page_read_cbegin(struct bfy_page const* page) {
+    return page->data + page->read_pos;
 }
 
 static size_t
-block_get_content_len(struct bfy_block const* block) {
-    return block->write_pos - block->read_pos;
+page_get_content_len(struct bfy_page const* page) {
+    return page->write_pos - page->read_pos;
 }
 static size_t
-block_get_space_len(struct bfy_block const* block) {
-    return block->size - block->write_pos;
+page_get_space_len(struct bfy_page const* page) {
+    return page->size - page->write_pos;
 }
 
 static bool
-block_realloc(struct bfy_block* block, size_t requested) {
-    assert(block_can_realloc(block));
+page_realloc(struct bfy_page* page, size_t requested) {
+    assert(page_can_realloc(page));
 
     // maybe free the memory
     if (requested == 0) {
-        if (block->data != NULL) {
-            free(block->data);
-            block->data = NULL;
+        if (page->data != NULL) {
+            free(page->data);
+            page->data = NULL;
         }
         return true;
     }
@@ -118,37 +114,43 @@ block_realloc(struct bfy_block* block, size_t requested) {
         new_size *= 2u;
     }
 
-    if (new_size <= block->size) {
+    if (new_size <= page->size) {
         // FIXME: is there a use case for allowing shrinking?
         return true;
     }
 
-    void* new_data = realloc(block->data, new_size);
+    void* new_data = realloc(page->data, new_size);
     if (new_data == NULL) {
         errno = ENOMEM;
         return false;
     } else {
-        block->data = new_data;
-        block->size = new_size;
+        page->data = new_data;
+        page->size = new_size;
         return true;
     }
 }
 
 static bool
-block_ensure_space_len(struct bfy_block* block, size_t wanted) {
-    size_t const space = block_get_space_len(block);
-    return (wanted <= space) || (block_can_realloc(block) && block_realloc(block, block->size + (wanted - space)));
+page_ensure_space_len(struct bfy_page* page, size_t wanted) {
+    size_t const space = page_get_space_len(page);
+    if (wanted <= space) {
+        return true;
+    }
+    if (page_can_realloc(page)) {
+       return page_realloc(page, page->size + (wanted - space));
+    }
+    return false;
 }
 
 static void
-block_release(struct bfy_block* block) {
-    if (block->unref_cb != NULL) {
-        block->unref_cb(block->data, block->size, block->unref_arg);
+page_release(struct bfy_page* page) {
+    if (page->unref_cb != NULL) {
+        page->unref_cb(page->data, page->size, page->unref_arg);
     }
-    if (block_can_realloc(block)) {
-        block_realloc(block, 0);
+    if (page_can_realloc(page)) {
+        page_realloc(page, 0);
     }
-    *block = InitBlock;
+    *page = InitPage;
 }
 
 /// bfy_buffer life cycle
@@ -169,10 +171,10 @@ bfy_buffer_new(void) {
 bfy_buffer
 bfy_buffer_init_unmanaged(void* data, size_t len) {
     bfy_buffer const buf = {
-        .block = {
+        .page = {
             .data = data,
             .size = len,
-            .flags = BFY_BLOCK_FLAGS_UNMANAGED
+            .flags = BFY_PAGE_FLAGS_UNMANAGED
         }
     };
     return buf;
@@ -186,24 +188,24 @@ bfy_buffer_new_unmanaged(void* data, size_t len) {
 }
 
 static size_t
-buffer_count_blocks(bfy_buffer const* buf) {
-    return blocks_cend(buf) - blocks_cbegin(buf);
+buffer_count_pages(bfy_buffer const* buf) {
+    return pages_cend(buf) - pages_cbegin(buf);
 }
 
 static void
-buffer_release_first_n_blocks(bfy_buffer* buf, size_t n) {
-    n = size_t_min(n, buffer_count_blocks(buf));
-    for (struct bfy_block *it=blocks_begin(buf), *const end=it+n; it!=end; ++it) {
-        block_release(it);
+buffer_release_first_n_pages(bfy_buffer* buf, size_t n) {
+    n = size_t_min(n, buffer_count_pages(buf));
+    for (struct bfy_page *it=pages_begin(buf), *const end=it+n; it!=end; ++it) {
+        page_release(it);
     }
 }
 
 void
 bfy_buffer_destruct(bfy_buffer* buf) {
-    buffer_release_first_n_blocks(buf, SIZE_MAX);
-    free(buf->blocks);
-    buf->blocks = NULL;
-    buf->n_blocks = 0;
+    buffer_release_first_n_pages(buf, SIZE_MAX);
+    free(buf->pages);
+    buf->pages = NULL;
+    buf->n_pages = 0;
 }
 
 void
@@ -215,27 +217,27 @@ bfy_buffer_free(bfy_buffer* buf) {
 /// some simple getters
 
 static struct bfy_pos
-buffer_get_pos(bfy_buffer const* buf, size_t wanted) {
+buffer_get_pos(bfy_buffer const* buf, size_t content_pos) {
     struct bfy_pos ret = { 0 };
 
-    struct bfy_block const* const begin = blocks_cbegin(buf);
-    struct bfy_block const* const end = blocks_cend(buf);
-    struct bfy_block const* it;
+    struct bfy_page const* const begin = pages_cbegin(buf);
+    struct bfy_page const* const end = pages_cend(buf);
+    struct bfy_page const* it;
     for (it = begin; it != end; ++it) {
-        size_t const block_len = block_get_content_len(it);
-        size_t const got = size_t_min(block_len, wanted);
+        size_t const page_len = page_get_content_len(it);
+        size_t const got = size_t_min(page_len, content_pos);
         if (got == 0) {
             break;
         }
         ret.content_pos += got;
-        wanted -= got;
-        if ((wanted == 0) && (block_len > got)) {
-            ret.block_pos = got;
+        content_pos -= got;
+        if ((content_pos == 0) && (page_len > got)) {
+            ret.page_pos = got;
             break;
         }
     }
 
-    ret.block_idx = it - begin;
+    ret.page_idx = it - begin;
     return ret;
 }
 
@@ -246,7 +248,7 @@ bfy_buffer_get_content_len(bfy_buffer const* buf) {
 
 size_t
 bfy_buffer_get_space_len(bfy_buffer const* buf) {
-    return block_get_space_len(blocks_cback(buf));
+    return page_get_space_len(pages_cback(buf));
 }
 
 /// readers
@@ -258,10 +260,10 @@ bfy_buffer_peek_all(bfy_buffer const* buf,
 }
 
 static struct bfy_iovec
-block_peek_content(struct bfy_block const* block, size_t n) {
+page_peek_content(struct bfy_page const* page, size_t n) {
     struct bfy_iovec vec = {
-        .iov_base = (void*) block_read_cbegin(block),
-        .iov_len = size_t_min(n, block_get_content_len(block))
+        .iov_base = (void*) page_read_cbegin(page),
+        .iov_len = size_t_min(n, page_get_content_len(page))
     };
     return vec;
 }
@@ -270,167 +272,163 @@ size_t
 bfy_buffer_peek(bfy_buffer const* buf, size_t wanted,
                 struct bfy_iovec* vec, size_t n_vec) {
     struct bfy_pos const pos = buffer_get_pos(buf, wanted);
-    size_t const needed = pos.block_idx + (pos.block_pos ? 1 : 0);
+    size_t const needed = pos.page_idx + (pos.page_pos ? 1 : 0);
 
     struct bfy_iovec const* const vec_end = vec + n_vec;
-    struct bfy_block const* it = blocks_cbegin(buf);
-    struct bfy_block const* end = it + size_t_min(n_vec, pos.block_idx);
+    struct bfy_page const* it = pages_cbegin(buf);
+    struct bfy_page const* end = it + size_t_min(n_vec, pos.page_idx);
     for ( ; it != end; ++it) {
-        *vec++ = block_peek_content(it, SIZE_MAX);
+        *vec++ = page_peek_content(it, SIZE_MAX);
     }
-    if ((pos.block_pos > 0) && (vec < vec_end)) {
-        *vec++ = block_peek_content(it, pos.block_pos);
+    if ((pos.page_pos > 0) && (vec < vec_end)) {
+        *vec++ = page_peek_content(it, pos.page_pos);
     }
     return needed;
 }
 
-/// adding blocks
+/// adding pages
 
 static bool
 buf_has_readable(bfy_buffer const* buf) {
-    return block_has_readable(blocks_cbegin(buf));
+    return page_has_readable(pages_cbegin(buf));
 }
 
 static bool
-buffer_insert_blocks(bfy_buffer* buf, size_t pos,
-                     struct bfy_block const* new_blocks,
-                     size_t n_new_blocks) {
-    if (n_new_blocks > 0) {
-        struct bfy_block const* old_blocks = blocks_cbegin(buf);
-        size_t const n_old_blocks = buf_has_readable(buf)
-                                  ? blocks_cend(buf) - old_blocks
+buffer_insert_pages(bfy_buffer* buf, size_t pos,
+                     struct bfy_page const* new_pages,
+                     size_t new_len) {
+    if (new_len > 0) {
+        struct bfy_page const* old_pages = pages_cbegin(buf);
+        size_t const old_len = buf_has_readable(buf)
+                                  ? pages_cend(buf) - old_pages
                                   : 0;
-        pos = size_t_min(pos, n_old_blocks);
-        const size_t blocksize = sizeof(struct bfy_block);
-        struct bfy_block* const blocks = malloc(blocksize * (n_old_blocks + n_new_blocks));
-        if (blocks == NULL) {
+        pos = size_t_min(pos, old_len);
+        const size_t pagesize = sizeof(struct bfy_page);
+        struct bfy_page* const pages = malloc(pagesize * (old_len + new_len));
+        if (pages == NULL) {
             return false;
         }
-        memcpy(blocks, old_blocks, blocksize * pos);
-        memcpy(blocks + pos, new_blocks, blocksize * n_new_blocks);
-        memcpy(blocks + pos + n_new_blocks, old_blocks + pos, blocksize * (n_old_blocks - pos));
-        free(buf->blocks);
-        buf->blocks = blocks;
-        buf->n_blocks = n_old_blocks + n_new_blocks;
+        memcpy(pages, old_pages, pagesize * pos);
+        memcpy(pages + pos, new_pages, pagesize * new_len);
+        memcpy(pages + pos + new_len, old_pages + pos, pagesize * (old_len - pos));
+        free(buf->pages);
+        buf->pages = pages;
+        buf->n_pages = old_len + new_len;
     }
     return true;
 }
 
 static bool
-buffer_append_blocks(bfy_buffer* tgt,
-                     struct bfy_block const* new_blocks,
-                     size_t n_new_blocks) {
-    return buffer_insert_blocks(tgt,
-            blocks_cend(tgt)-blocks_begin(tgt),
-            new_blocks, n_new_blocks);
+buffer_append_pages(bfy_buffer* tgt,
+                    struct bfy_page const* new_pages,
+                    size_t new_len) {
+    return buffer_insert_pages(tgt, buffer_count_pages(tgt),
+                               new_pages, new_len);
 }
 static bool
-buffer_prepend_blocks(bfy_buffer* tgt,
-                      struct bfy_block const* new_blocks,
-                      size_t n_new_blocks) {
-    return buffer_insert_blocks(tgt, 0, new_blocks, n_new_blocks);
+buffer_prepend_pages(bfy_buffer* tgt,
+                      struct bfy_page const* new_pages,
+                      size_t new_len) {
+    return buffer_insert_pages(tgt, 0, new_pages, new_len);
 }
 
-/// removing blocks
+/// removing pages
 
 void
 bfy_buffer_reset(bfy_buffer* buf) {
-    struct bfy_block recycle_me = InitBlock;
+    struct bfy_page recycle_me = InitPage;
 
-    struct bfy_block* it = blocks_begin(buf);
-    struct bfy_block const* const end = blocks_cend(buf);
+    struct bfy_page* it = pages_begin(buf);
+    struct bfy_page const* const end = pages_cend(buf);
     for ( ; it != end; ++it) {
-        if (block_is_recyclable(it) && it->size > recycle_me.size) {
-            block_release(&recycle_me);
+        if (page_is_recyclable(it) && it->size > recycle_me.size) {
+            page_release(&recycle_me);
             recycle_me = *it;
             recycle_me.read_pos = recycle_me.write_pos = 0;
         } else {
-            block_release(it);
+            page_release(it);
         }
     }
 
-    free(buf->blocks);
-    buf->blocks = NULL;
-    buf->n_blocks = 0;
+    free(buf->pages);
+    buf->pages = NULL;
+    buf->n_pages = 0;
 
-    buf->block = recycle_me;
+    buf->page = recycle_me;
 }
 
 static void
-buffer_forget_first_n_blocks(bfy_buffer* buf, size_t len) {
-    struct bfy_block* const begin = blocks_begin(buf);
+buffer_forget_first_n_pages(bfy_buffer* buf, size_t len) {
+    struct bfy_page* const begin = pages_begin(buf);
 
-    for (struct bfy_block* it=begin, *const end=it + len; it != end; ++it) {
-        *it = InitBlock;
+    for (struct bfy_page* it=begin, *const end=it + len; it != end; ++it) {
+        *it = InitPage;
     }
 
-    if (buf->blocks != NULL) {
-        struct bfy_block const* const end = blocks_cend(buf);
+    if (buf->pages != NULL) {
+        struct bfy_page const* const end = pages_cend(buf);
         if (begin + len < end) {
-            const size_t blocksize = sizeof(struct bfy_block);
-            memmove(begin, begin + len, blocksize * (end - begin - len));
-            buf->n_blocks -= len;
+            const size_t pagesize = sizeof(struct bfy_page);
+            memmove(begin, begin + len, pagesize * (end - begin - len));
+            buf->n_pages -= len;
         } else {
-            buf->n_blocks = 1;
-            buf->blocks[0] = InitBlock;
+            buf->n_pages = 1;
+            buf->pages[0] = InitPage;
         }
     }
 }
 
 static void
-buffer_drain_first_n_blocks(bfy_buffer* buf, size_t len) {
-    size_t const total_blocks = buffer_count_blocks(buf);
-    len = size_t_min(len, total_blocks);
-    if (len == total_blocks) {
+buffer_drain_first_n_pages(bfy_buffer* buf, size_t len) {
+    if (len < buffer_count_pages(buf)) {
+        buffer_release_first_n_pages(buf, len);
+        buffer_forget_first_n_pages(buf, len);
+    } else {
         bfy_buffer_reset(buf);
-        return;
     }
-
-    buffer_release_first_n_blocks(buf, len);
-    buffer_forget_first_n_blocks(buf, len);
 }
 
 ///
 
-typedef bool (block_test)(struct bfy_block const* block);
+typedef bool (page_test)(struct bfy_page const* page);
 
-static struct bfy_block*
-buffer_get_usable_back(bfy_buffer* buf, block_test* test) {
-    struct bfy_block* block = blocks_back(buf);
-    if (test(block)) {
-        return block;
+static struct bfy_page*
+buffer_get_usable_back(bfy_buffer* buf, page_test* test) {
+    struct bfy_page* page = pages_back(buf);
+    if (test(page)) {
+        return page;
     }
-    if (!buffer_append_blocks(buf, &InitBlock, 1)) {
+    if (!buffer_append_pages(buf, &InitPage, 1)) {
         return NULL;
     }
-    return blocks_back(buf);
+    return pages_back(buf);
 }
 
-static struct bfy_block*
+static struct bfy_page*
 buffer_get_writable_back(bfy_buffer* buf) {
-    return buffer_get_usable_back(buf, block_is_writable);
+    return buffer_get_usable_back(buf, page_is_writable);
 }
 
 /// space
 
 bool
-bfy_buffer_add_chain(struct bfy_buffer* buf) {
-    struct bfy_block block = InitBlock;
-    return buffer_append_blocks(buf, &block, 1);
+bfy_buffer_add_pagebreak(struct bfy_buffer* buf) {
+    struct bfy_page page = InitPage;
+    return buffer_append_pages(buf, &page, 1);
 }
 
 static struct bfy_iovec
-block_peek_space(struct bfy_block const* block) {
+page_peek_space(struct bfy_page const* page) {
     struct bfy_iovec vec = {
-        .iov_base = (void*) (block->data + block->write_pos),
-        .iov_len = block_get_space_len(block)
+        .iov_base = (void*) (page->data + page->write_pos),
+        .iov_len = page_get_space_len(page)
     };
     return vec;
 }
 
 struct bfy_iovec
 bfy_buffer_peek_space(struct bfy_buffer* buf) {
-    return block_peek_space(blocks_back(buf));
+    return page_peek_space(pages_back(buf));
 }
 
 struct bfy_iovec
@@ -443,12 +441,12 @@ size_t
 bfy_buffer_commit_space(struct bfy_buffer* buf, size_t len) {
     size_t n_committed = 0;
 
-    struct bfy_block* block = buffer_get_writable_back(buf);
-    if (block != NULL) {
-        size_t const n_writable = block_get_space_len(block);
+    struct bfy_page* page = buffer_get_writable_back(buf);
+    if (page != NULL) {
+        size_t const n_writable = page_get_space_len(page);
         assert (len <= n_writable);
         len = size_t_min(len, n_writable);
-        block->write_pos += len;
+        page->write_pos += len;
         n_committed = len;
     }
 
@@ -460,29 +458,29 @@ bfy_buffer_commit_space(struct bfy_buffer* buf, size_t len) {
 bool
 bfy_buffer_add_readonly(bfy_buffer* buf,
         const void* data, size_t len) {
-    struct bfy_block const block = {
+    struct bfy_page const page = {
         .data = (void*) data,
         .size = len,
         .read_pos = 0,
         .write_pos = len,
-        .flags = BFY_BLOCK_FLAGS_READONLY | BFY_BLOCK_FLAGS_UNMANAGED
+        .flags = BFY_PAGE_FLAGS_READONLY | BFY_PAGE_FLAGS_UNMANAGED
     };
-    return buffer_append_blocks(buf, &block, 1);
+    return buffer_append_pages(buf, &page, 1);
 }
 
 bool bfy_buffer_add_reference(bfy_buffer* buf,
         const void* data, size_t len, 
         bfy_unref_cb* cb, void* unref_arg) {
-    struct bfy_block const block = {
+    struct bfy_page const page = {
         .data = (void*) data,
         .size = len,
         .read_pos = 0,
         .write_pos = len,
-        .flags = BFY_BLOCK_FLAGS_READONLY,
+        .flags = BFY_PAGE_FLAGS_READONLY,
         .unref_cb = cb,
         .unref_arg = unref_arg
     };
-    return buffer_append_blocks(buf, &block, 1);
+    return buffer_append_pages(buf, &page, 1);
 }
 
 bool
@@ -512,12 +510,12 @@ bfy_buffer_add_printf(bfy_buffer* buf, char const* fmt, ...) {
 
 bool
 bfy_buffer_ensure_space(bfy_buffer* buf, size_t len) {
-    struct bfy_block* block = blocks_back(buf);
-    if (block_get_space_len(block) >= len) {
+    struct bfy_page* page = pages_back(buf);
+    if (page_get_space_len(page) >= len) {
         return true;
     }
-    block = buffer_get_usable_back(buf, block_can_realloc);
-    return (block != NULL) && block_ensure_space_len(block, len);
+    page = buffer_get_usable_back(buf, page_can_realloc);
+    return (page != NULL) && page_ensure_space_len(page, len);
 }
 
 bool
@@ -552,20 +550,20 @@ bfy_buffer_add_vprintf(bfy_buffer* buf, char const* fmt, va_list args_in) {
 ///
 
 static size_t
-block_drain(struct bfy_block* block, size_t n) {
-    n = size_t_min(n, block_get_content_len(block));
-    block->read_pos += n;
+page_drain(struct bfy_page* page, size_t n) {
+    n = size_t_min(n, page_get_content_len(page));
+    page->read_pos += n;
     return n;
 }
 
 bool
 bfy_buffer_drain(bfy_buffer* buf, size_t wanted) {
     struct bfy_pos const pos = buffer_get_pos(buf, wanted);
-    if (pos.block_idx > 0) {
-        buffer_drain_first_n_blocks(buf, pos.block_idx);
+    if (pos.page_idx > 0) {
+        buffer_drain_first_n_pages(buf, pos.page_idx);
     }
-    if (pos.block_pos > 0) {
-        block_drain(blocks_begin(buf), pos.block_pos);
+    if (pos.page_pos > 0) {
+        page_drain(pages_begin(buf), pos.page_pos);
     }
     return true;
 }
@@ -573,8 +571,8 @@ bfy_buffer_drain(bfy_buffer* buf, size_t wanted) {
 ///
 
 static size_t
-block_copyout(struct bfy_block const* block, void* data, size_t wanted) {
-    struct bfy_iovec const vec = block_peek_content(block, wanted);
+page_copyout(struct bfy_page const* page, void* data, size_t wanted) {
+    struct bfy_iovec const vec = page_peek_content(page, wanted);
     memcpy(data, vec.iov_base, vec.iov_len);
     return vec.iov_len;
 }
@@ -583,36 +581,36 @@ size_t
 bfy_buffer_copyout(bfy_buffer const* buf, void* vdata, size_t wanted) {
     int8_t* data = vdata;
     struct bfy_pos const pos = buffer_get_pos(buf, wanted);
-    struct bfy_block const* it = blocks_cbegin(buf);
-    struct bfy_block const* const end = it + pos.block_idx;
+    struct bfy_page const* it = pages_cbegin(buf);
+    struct bfy_page const* const end = it + pos.page_idx;
     for ( ; it != end; ++it) {
-        data += block_copyout(it, data, SIZE_MAX);
+        data += page_copyout(it, data, SIZE_MAX);
     }
-    if (pos.block_pos > 0) {
-        data += block_copyout(it, data, pos.block_pos);
+    if (pos.page_pos > 0) {
+        data += page_copyout(it, data, pos.page_pos);
     }
     assert ((data - (int8_t*)vdata) == pos.content_pos);
     return data - (int8_t*)vdata;
 }
 
 static size_t
-block_remove(struct bfy_block* block, void* data, size_t wanted) {
-    size_t const n_copied = block_copyout(block, data, wanted);
-    block->read_pos += n_copied;
+page_remove(struct bfy_page* page, void* data, size_t wanted) {
+    size_t const n_copied = page_copyout(page, data, wanted);
+    page->read_pos += n_copied;
     return n_copied;
 }
 
 static size_t
 buffer_remove(bfy_buffer* buf, void* vdata, struct bfy_pos stop) {
     int8_t* data = vdata;
-    struct bfy_block* it = blocks_begin(buf);
-    for (int i=0; i<stop.block_idx; ++i, ++it) {
-        data += block_remove(it, data, SIZE_MAX);
+    struct bfy_page* it = pages_begin(buf);
+    for (int i=0; i<stop.page_idx; ++i, ++it) {
+        data += page_remove(it, data, SIZE_MAX);
     }
-    if (stop.block_pos > 0) {
-        data += block_remove(it, data, stop.block_pos);
+    if (stop.page_pos > 0) {
+        data += page_remove(it, data, stop.page_pos);
     }
-    buffer_drain_first_n_blocks(buf, stop.block_idx);
+    buffer_drain_first_n_pages(buf, stop.page_idx);
     return data - (int8_t*)vdata;
 }
 
@@ -643,29 +641,31 @@ void*
 bfy_buffer_make_contiguous(bfy_buffer* buf, size_t wanted) {
     struct bfy_pos const pos = buffer_get_pos(buf, wanted);
 
-    // if the first block already holds wanted, then we're done
-    if ((pos.block_idx == 0) || (pos.block_idx == 1 && pos.block_pos == 0)) {
-        return block_read_begin(blocks_begin(buf));
+    // if the first page already holds wanted, then we're done
+    if ((pos.page_idx == 0) || (pos.page_idx == 1 && pos.page_pos == 0)) {
+        return page_read_begin(pages_begin(buf));
     }
 
-    // FIXME: if block->size >= wanted then do the copies there
+    // FIXME: if page->size >= wanted then do the copies there
 
-    // build a contiguous block
+    // FIXME: copyout instead of remove so we can reuse pages[0]
+
+    // build a contiguous page
     int8_t* data = malloc(pos.content_pos);
     size_t const n_moved = buffer_remove(buf, data, pos);
 
-    // now prepend a new block with the contiguous memory
-    struct bfy_block const newblock = {
+    // now prepend a new page with the contiguous memory
+    struct bfy_page const newpage = {
         .data = data,
         .size = n_moved,
         .write_pos = n_moved
     };
-    if (!buffer_prepend_blocks(buf, &newblock, 1)) {
+    if (!buffer_prepend_pages(buf, &newpage, 1)) {
         free(data);
         return false;
     }
 
-    return block_read_begin(blocks_begin(buf));
+    return page_read_begin(pages_begin(buf));
 }
 
 bool
@@ -675,26 +675,102 @@ bfy_buffer_add_buffer(bfy_buffer* buf, bfy_buffer* src) {
 
 bool
 bfy_buffer_remove_buffer(bfy_buffer* buf, bfy_buffer* tgt, size_t wanted) {
-    // see how many blocks get moved as-is
-    // and how many bytes will be left if we need to move half-a-block
     struct bfy_pos pos = buffer_get_pos(buf, wanted);
 
-    // are there any blocks that get moved over completely?
-    if (pos.block_idx > 0) {
-        buffer_append_blocks(tgt, blocks_cbegin(buf), pos.block_idx);
-        buffer_forget_first_n_blocks(buf, pos.block_idx);
+    // are there any pages that get moved over completely?
+    if (pos.page_idx > 0) {
+        buffer_append_pages(tgt, pages_cbegin(buf), pos.page_idx);
+        buffer_forget_first_n_pages(buf, pos.page_idx);
     }
 
-    // are there any remainder bytes to move over in a new block?
-    if (pos.block_pos > 0) {
-        struct bfy_block* block = blocks_begin(buf);
-        bfy_buffer_add(tgt, block_read_cbegin(block), pos.block_pos);
-        block_drain(block, pos.block_pos);
+    // are there any remainder bytes to move over in a new page?
+    if (pos.page_pos > 0) {
+        struct bfy_page* page = pages_begin(buf);
+        bfy_buffer_add(tgt, page_read_cbegin(page), pos.page_pos);
+        page_drain(page, pos.page_pos);
     }
 
     return true;
 }
 
+/// search
+
+static struct bfy_iovec
+buffer_get_content_at_pos(bfy_buffer const* buf, struct bfy_pos pos) {
+    struct bfy_page const* page = pages_cbegin(buf) + pos.page_idx;
+    struct bfy_iovec io = {
+        .iov_base = (void*) page_read_cbegin(page),
+        .iov_len = page_get_content_len(page)
+    };
+    if (pos.page_pos > 0) {
+        io.iov_base = (char*)io.iov_base + pos.page_pos;
+        io.iov_len -= pos.page_pos;
+    }
+    return io;
+}
+
+static struct bfy_iovec
+buffer_get_content_at_content_pos(bfy_buffer const* buf, size_t pos) {
+    struct bfy_iovec io = buffer_get_content_at_pos(buf, buffer_get_pos(buf, pos));
+    fprintf(stderr, "content_pos %zu -> iov_base %p, iov_len %zu\n", pos, io.iov_base, io.iov_len);
+    return io;
+}
+
+static bool
+buffer_contains_at(bfy_buffer const* buf, size_t at,
+                   void const* needle, size_t needle_len) {
+    fprintf(stderr, "contains at %zu needle %s needle_len %zu\n", at, (char const*)needle, needle_len);
+    struct bfy_iovec const io = buffer_get_content_at_content_pos(buf, at);
+    fprintf(stderr, "iov_len is %zu\n", io.iov_len);
+    if (io.iov_len == 0) {
+        fprintf(stderr, "returning false because iov_len is 0\n");
+        return false;
+    }
+    if (io.iov_len >= needle_len) {
+        bool const match = !memcmp(io.iov_base, needle, needle_len);
+        fprintf(stderr, "returning %d because memcmp needle_len\n", (int)match);
+        return !memcmp(io.iov_base, needle, needle_len);
+    }
+    if (memcmp(io.iov_base, needle, io.iov_len)) {
+        fprintf(stderr, "returning false because memcmp iov_len\n");
+        return false;
+    }
+    return buffer_contains_at(buf, at + io.iov_len,
+                              (char const*)needle + io.iov_len,
+                              needle_len - io.iov_len);
+}
+
+bool
+bfy_buffer_search_range(bfy_buffer const* buf,
+                        size_t begin, size_t end,
+                        void const* needle, size_t needle_len,
+                        size_t* match) {
+    end = size_t_min(end, bfy_buffer_get_content_len(buf));
+
+    for (size_t walk = begin; walk < end; ++walk) {
+        fprintf(stderr, "WALK %zu\n", walk);
+        if (end - walk < needle_len) {
+            fprintf(stderr, "out of room\n");
+            return false;
+        }
+        if (buffer_contains_at(buf, walk, needle, needle_len)) {
+            fprintf(stderr, "found match at %zu\n", walk);
+            *match = walk;
+            return true;
+        }
+    }
+
+    return false;
+}
+
+bool
+bfy_buffer_search(bfy_buffer const* buf,
+                  void const* needle, size_t needle_len,
+                  size_t* match) {
+    return bfy_buffer_search_range(buf, 0, SIZE_MAX, needle, needle_len, match);
+}
+
+/// endian
 #include "portable-endian.h"
 
 bool
