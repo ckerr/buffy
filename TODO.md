@@ -5,6 +5,7 @@
 - [ ] Code coverage
 - [ ] Add clang-tidy support
 - [ ] Add API documentation in header
+- [ ] Remove bool from API
 
 ## Missing Functionality
 

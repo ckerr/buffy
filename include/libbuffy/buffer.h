@@ -44,53 +44,55 @@ struct bfy_iovec {
 
 typedef struct bfy_buffer bfy_buffer;
 
-struct bfy_buffer bfy_buffer_init(void);
-struct bfy_buffer* bfy_buffer_new(void);
-struct bfy_buffer bfy_buffer_init_unmanaged(void* data, size_t size);
-struct bfy_buffer* bfy_buffer_new_unmanaged(void* data, size_t size);
+bfy_buffer bfy_buffer_init(void);
+bfy_buffer* bfy_buffer_new(void);
+bfy_buffer bfy_buffer_init_unmanaged(void* space, size_t len);
+bfy_buffer* bfy_buffer_new_unmanaged(void* space, size_t len);
 void bfy_buffer_destruct(bfy_buffer* buf);
 void bfy_buffer_free(bfy_buffer*);
 
 size_t bfy_buffer_get_content_len(bfy_buffer const* buf);
-size_t bfy_buffer_peek(bfy_buffer const* buf, size_t size, struct bfy_iovec* vec_out, size_t n_vec);
-size_t bfy_buffer_peek_all(bfy_buffer const* buf, struct bfy_iovec* vec_out, size_t n_vec);
+size_t bfy_buffer_peek(bfy_buffer const* buf, size_t len,
+                       struct bfy_iovec* vec_out, size_t vec_len);
+size_t bfy_buffer_peek_all(bfy_buffer const* buf,
+                           struct bfy_iovec* vec_out, size_t vec_len);
 
-bool bfy_buffer_add(bfy_buffer* buf, void const* addme, size_t n);
-bool bfy_buffer_add_ch(bfy_buffer* buf, char ch);
+bool bfy_buffer_add(bfy_buffer* buf, void const* addme, size_t len);
+bool bfy_buffer_add_ch(bfy_buffer* buf, char addme);
 bool bfy_buffer_add_readonly(bfy_buffer* buf, const void* data, size_t len);
-bool bfy_buffer_add_reference(bfy_buffer* buf, const void* data, size_t len, bfy_unref_cb* cb, void* user_data);
+bool bfy_buffer_add_reference(bfy_buffer* buf, const void* data, size_t len,
+                              bfy_unref_cb* cb, void* cb_data);
 bool bfy_buffer_add_printf(bfy_buffer* buf, char const* fmt, ...);
-bool bfy_buffer_add_vprintf(bfy_buffer* buf, char const* fmt, va_list args_in);
-bool bfy_buffer_add_buffer(bfy_buffer* buf, bfy_buffer* src);
-bool bfy_buffer_add_pagebreak(struct bfy_buffer* buf);
-bool bfy_buffer_add_hton_u8 (struct bfy_buffer* buf, uint8_t  addme);
-bool bfy_buffer_add_hton_u16(struct bfy_buffer* buf, uint16_t addme);
-bool bfy_buffer_add_hton_u32(struct bfy_buffer* buf, uint32_t addme);
-bool bfy_buffer_add_hton_u64(struct bfy_buffer* buf, uint64_t addme);
+bool bfy_buffer_add_vprintf(bfy_buffer* buf, char const* fmt, va_list args);
+bool bfy_buffer_add_buffer(bfy_buffer* buf, bfy_buffer* addme);
+bool bfy_buffer_add_pagebreak(bfy_buffer* buf);
+bool bfy_buffer_add_hton_u8(bfy_buffer* buf, uint8_t addme);
+bool bfy_buffer_add_hton_u16(bfy_buffer* buf, uint16_t addme);
+bool bfy_buffer_add_hton_u32(bfy_buffer* buf, uint32_t addme);
+bool bfy_buffer_add_hton_u64(bfy_buffer* buf, uint64_t addme);
 
-bool bfy_buffer_remove_buffer(bfy_buffer* buf, bfy_buffer* tgt, size_t len);
+bool bfy_buffer_remove_buffer(bfy_buffer* buf, bfy_buffer* setme, size_t len);
 char* bfy_buffer_remove_string(bfy_buffer* buf, size_t* len);
-size_t bfy_buffer_remove(bfy_buffer* buf, void* data, size_t n_wanted);
-bool bfy_buffer_remove_ntoh_u8 (struct bfy_buffer* buf, uint8_t* setme);
-bool bfy_buffer_remove_ntoh_u16(struct bfy_buffer* buf, uint16_t* setme);
-bool bfy_buffer_remove_ntoh_u32(struct bfy_buffer* buf, uint32_t* setme);
-bool bfy_buffer_remove_ntoh_u64(struct bfy_buffer* buf, uint64_t* setme);
-size_t bfy_buffer_copyout(bfy_buffer const* buf, void* vdata, size_t n_wanted);
+size_t bfy_buffer_remove(bfy_buffer* buf, void* data, size_t len);
+bool bfy_buffer_remove_ntoh_u8(bfy_buffer* buf, uint8_t* setme);
+bool bfy_buffer_remove_ntoh_u16(bfy_buffer* buf, uint16_t* setme);
+bool bfy_buffer_remove_ntoh_u32(bfy_buffer* buf, uint32_t* setme);
+bool bfy_buffer_remove_ntoh_u64(bfy_buffer* buf, uint64_t* setme);
+size_t bfy_buffer_copyout(bfy_buffer const* buf, void* vdata, size_t len);
 
-void bfy_buffer_reset(bfy_buffer* buf);
 size_t bfy_buffer_drain(bfy_buffer* buf, size_t len);
+size_t bfy_buffer_drain_all(bfy_buffer* buf);
 
-void* bfy_buffer_make_contiguous(bfy_buffer* buf, size_t size);
+void* bfy_buffer_make_contiguous(bfy_buffer* buf, size_t len);
 void* bfy_buffer_make_all_contiguous(bfy_buffer* buf);
 
-
-struct bfy_iovec bfy_buffer_peek_space(struct bfy_buffer* buf);
-struct bfy_iovec bfy_buffer_reserve_space(struct bfy_buffer* buf, size_t size);
-size_t bfy_buffer_commit_space(struct bfy_buffer* buf, size_t size);
+struct bfy_iovec bfy_buffer_peek_space(bfy_buffer* buf);
+struct bfy_iovec bfy_buffer_reserve_space(bfy_buffer* buf, size_t len);
+size_t bfy_buffer_commit_space(bfy_buffer* buf, size_t len);
 
 size_t bfy_buffer_get_space_len(bfy_buffer const* buf);
-bool bfy_buffer_ensure_space(bfy_buffer* buf, size_t size);
-bool bfy_buffer_expand(bfy_buffer* buf, size_t size);
+bool bfy_buffer_ensure_space(bfy_buffer* buf, size_t len);
+bool bfy_buffer_expand(bfy_buffer* buf, size_t len);
 
 bool bfy_buffer_search(bfy_buffer const* buf,
                        void const* needle, size_t needle_len,

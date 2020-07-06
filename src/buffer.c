@@ -369,9 +369,19 @@ bfy_buffer_commit_space(struct bfy_buffer* buf, size_t len) {
 bool
 bfy_buffer_ensure_space(bfy_buffer* buf, size_t len) {
     struct bfy_page* page = pages_back(buf);
-    if (page_get_space_len(page) >= len) {
-        return true;
+    if (page_is_writable(page)) {
+        size_t const space_len = page_get_space_len(page);
+        if (len <= space_len) {
+            return true;
+        }
+        if (len <= space_len + page->read_pos) {
+            memmove(page->data, page->data + page->read_pos, page_get_content_len(page));
+            page->write_pos -= page->read_pos;
+            page->read_pos = 0;
+            return true;
+        }
     }
+
     page = buffer_get_usable_back(buf, page_can_realloc);
     return (page != NULL) && page_ensure_space_len(page, len);
 }
@@ -423,8 +433,8 @@ bfy_buffer_add(bfy_buffer* buf, const void* data, size_t len) {
 }
 
 bool
-bfy_buffer_add_ch(bfy_buffer* buf, char ch) {
-    return bfy_buffer_add(buf, &ch, 1);
+bfy_buffer_add_ch(bfy_buffer* buf, char addme) {
+    return bfy_buffer_add(buf, &addme, 1);
 }
 
 bool
@@ -496,14 +506,23 @@ bfy_buffer_add_buffer(bfy_buffer* buf, bfy_buffer* src) {
 
 /// drain
 
-static void
-buffer_reset(bfy_buffer* buf, bool do_release) {
+enum {
+    DRAIN_FLAG_NORELEASE = (1<<0),
+    DRAIN_FLAG_NORECYCLE = (1<<1)
+};
+
+static size_t
+buffer_drain_all(bfy_buffer* buf, int flags) {
+    bool const do_release = (flags & DRAIN_FLAG_NORELEASE) == 0;
+    bool const do_recycle = (flags & DRAIN_FLAG_NORECYCLE) == 0;
+    size_t const drained = bfy_buffer_get_content_len(buf);
+
     struct bfy_page recycle_me = InitPage;
 
     struct bfy_page* it = pages_begin(buf);
     struct bfy_page const* const end = pages_cend(buf);
     for ( ; it != end; ++it) {
-        if (page_is_recyclable(it) && it->size > recycle_me.size) {
+        if (do_recycle && page_is_recyclable(it) && it->size > recycle_me.size) {
             if (do_release) {
                 page_release(&recycle_me);
             }
@@ -523,11 +542,13 @@ buffer_reset(bfy_buffer* buf, bool do_release) {
     buf->content_len = 0;
 
     buf->page = recycle_me;
+
+    return drained;
 }
 
-void
-bfy_buffer_reset(bfy_buffer* buf) {
-    return buffer_reset(buf, true);
+size_t
+bfy_buffer_drain_all(bfy_buffer* buf) {
+    return buffer_drain_all(buf, 0);
 }
 
 static void
@@ -551,11 +572,6 @@ buffer_forget_first_n_pages(bfy_buffer* buf, size_t len) {
     }
 }
 
-enum {
-    DRAIN_FLAG_NORELEASE = (1<<0),
-    DRAIN_FLAG_NOCACHE = (1<<1)
-};
-
 static void
 buffer_release_first_n_pages(bfy_buffer* buf, size_t n) {
     n = size_t_min(n, buffer_count_pages(buf));
@@ -569,16 +585,12 @@ buffer_release_first_n_pages(bfy_buffer* buf, size_t n) {
 
 static size_t
 buffer_drain(bfy_buffer* const buf, struct bfy_pos pos, int flags) {
-    bool const do_release = (flags & DRAIN_FLAG_NORELEASE) == 0;
-    bool const do_cache = (flags & DRAIN_FLAG_NOCACHE) == 0;
-
-    if (do_cache && (pos.content_pos >= buf->content_len)) {
-        size_t const drained = buf->content_len;
-        buffer_reset(buf, do_release);
-        return drained;
+    if (pos.content_pos >= buf->content_len) {
+        return buffer_drain_all(buf, flags);
     }
 
     if (pos.page_idx > 0) {
+        bool const do_release = (flags & DRAIN_FLAG_NORELEASE) == 0;
         if (do_release) {
             buffer_release_first_n_pages(buf, pos.page_idx);
         }
@@ -702,7 +714,7 @@ bfy_buffer_remove_buffer(bfy_buffer* buf, bfy_buffer* tgt, size_t wanted) {
         bfy_buffer_add(tgt, page_read_cbegin(page), end.page_pos);
     }
 
-    return buffer_drain(buf, end, DRAIN_FLAG_NOCACHE | DRAIN_FLAG_NORELEASE) == end.content_pos;
+    return buffer_drain(buf, end, DRAIN_FLAG_NORECYCLE | DRAIN_FLAG_NORELEASE) == end.content_pos;
 }
 
 // make_contiguous
@@ -735,11 +747,7 @@ bfy_buffer_make_contiguous(bfy_buffer* buf, size_t wanted) {
         .size = n_moved,
         .write_pos = n_moved
     };
-    if (!buffer_prepend_pages(buf, &newpage, 1)) {
-        free(data);
-        return false;
-    }
-
+    buffer_prepend_pages(buf, &newpage, 1);
     return page_read_begin(pages_begin(buf));
 }
 
@@ -900,7 +908,7 @@ bfy_buffer_new_unmanaged(void* data, size_t len) {
 
 void
 bfy_buffer_destruct(bfy_buffer* buf) {
-    buffer_drain(buf, buffer_get_pos(buf, SIZE_MAX), DRAIN_FLAG_NOCACHE);
+    buffer_drain_all(buf, DRAIN_FLAG_NORECYCLE);
     free(buf->pages);
     buf->pages = NULL;
     buf->n_pages = 0;

@@ -90,15 +90,16 @@ class BufferWithReadonlyStrings {
     static std::string_view constexpr str3 = { "Soup" };
     static std::array<std::string_view, 3> constexpr strs = { str1, str2, str3 };
     std::string allstrs;
-    BufferWithReadonlyStrings() {
-      buf = bfy_buffer_init();
-      for (auto const& str : strs) {
-        allstrs += str;
-        bfy_buffer_add_readonly(&buf, std::data(str), std::size(str));
-      }
+    BufferWithReadonlyStrings():
+        buf{bfy_buffer_init()}
+    {
+        for (auto const& str : strs) {
+            allstrs += str;
+            bfy_buffer_add_readonly(&buf, std::data(str), std::size(str));
+        }
     }
     ~BufferWithReadonlyStrings() {
-      bfy_buffer_destruct(&buf);
+        bfy_buffer_destruct(&buf);
     }
 };
 
@@ -308,6 +309,33 @@ TEST(Buffer, make_contiguous_when_only_one_page) {
     EXPECT_EQ(vecs1[0].iov_base, rv);
 }
 
+TEST(Buffer, recycles_pages) {
+    auto constexpr str = std::string_view { "1234567890" };
+    auto array = std::array<char, 16> {};
+    bfy_buffer buf = bfy_buffer_init_unmanaged(std::data(array), std::size(array));
+    auto const expected_pages = bfy_buffer_peek_all(&buf, nullptr, 0);
+
+    bfy_buffer_add(&buf, std::data(str), std::size(str));
+    EXPECT_EQ(10, bfy_buffer_get_content_len(&buf));
+    EXPECT_EQ(6, bfy_buffer_get_space_len(&buf));
+    EXPECT_EQ(expected_pages, bfy_buffer_peek_all(&buf, nullptr, 0));
+
+    bfy_buffer_remove(&buf, std::data(array), 5);
+    EXPECT_EQ(5, bfy_buffer_get_content_len(&buf));
+    EXPECT_EQ(6, bfy_buffer_get_space_len(&buf));
+    EXPECT_EQ(expected_pages, bfy_buffer_peek_all(&buf, nullptr, 0));
+
+    // now there's not enough space at the end of the page,
+    // but there will be if it realigns the content back to
+    // the front of the page...
+    bfy_buffer_add(&buf, std::data(str), std::size(str));
+    EXPECT_EQ(15, bfy_buffer_get_content_len(&buf));
+    EXPECT_EQ(1, bfy_buffer_get_space_len(&buf));
+    EXPECT_EQ(expected_pages, bfy_buffer_peek_all(&buf, nullptr, 0));
+
+    bfy_buffer_destruct(&buf);
+}
+
 namespace
 {
 
@@ -328,7 +356,7 @@ TEST(Buffer, make_contiguous_when_small_request) {
     auto const action = [&buf](auto const& str){bfy_buffer_add_readonly(&buf, std::data(str), std::size(str));};
     std::for_each(begin, end, action);
     auto const n_readable = bfy_buffer_get_content_len(&buf);
-    auto const acc = [](auto& acc, auto const& str){return acc + std::size(str);};
+    auto const acc = [](auto const& acc, auto const& str){return acc + std::size(str);};
     auto const n_expected_readable = std::accumulate(begin, end, size_t{}, acc);
     EXPECT_EQ(n_pages_in, buffer_count_pages(&buf));
     EXPECT_EQ(n_expected_readable, n_readable);
@@ -356,7 +384,7 @@ TEST(Buffer, make_contiguous_when_readonly_pages) {
     auto const action = [&buf](auto const& str){bfy_buffer_add_readonly(&buf, std::data(str), std::size(str));};
     std::for_each(begin, end, action);
     auto const n_readable = bfy_buffer_get_content_len(&buf);
-    auto const n_expected_readable = std::accumulate(begin, end, size_t{}, [](auto& acc, auto const& str){return acc + std::size(str);});
+    auto const n_expected_readable = std::accumulate(begin, end, size_t{}, [](auto const& acc, auto const& str){return acc + std::size(str);});
     EXPECT_EQ(n_expected_readable, n_readable);
     EXPECT_EQ(n_pages_in, buffer_count_pages(&buf));
 
@@ -777,7 +805,6 @@ TEST(Buffer, remove_part_of_first_page) {
     auto const pre_contents_a = buffer_copyout(&a.buf);
     auto const pre_contents_b = buffer_copyout(&buf);
     auto const pre_pages_a = buffer_get_pages(&a.buf);
-    auto const pre_pages_b = buffer_get_pages(&buf);
 
     // remove half of the first buffer so that we know we're
     // forcing a page to be split in half
@@ -895,7 +922,7 @@ TEST(Buffer, reset) {
     EXPECT_TRUE(bfy_buffer_add(&buf, std::data(str), std::size(str)));
     EXPECT_EQ(std::size(str), bfy_buffer_get_content_len(&buf));
     EXPECT_EQ(n_bytes - std::size(str), bfy_buffer_get_space_len(&buf));
-    bfy_buffer_reset(&buf);
+    bfy_buffer_drain_all(&buf);
     EXPECT_EQ(0, bfy_buffer_get_content_len(&buf));
     EXPECT_EQ(n_bytes, bfy_buffer_get_space_len(&buf));
 
