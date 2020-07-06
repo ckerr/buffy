@@ -78,7 +78,7 @@ bool bfy_buffer_remove_ntoh_u64(struct bfy_buffer* buf, uint64_t* setme);
 size_t bfy_buffer_copyout(bfy_buffer const* buf, void* vdata, size_t n_wanted);
 
 void bfy_buffer_reset(bfy_buffer* buf);
-bool bfy_buffer_drain(bfy_buffer* buf, size_t len);
+size_t bfy_buffer_drain(bfy_buffer* buf, size_t len);
 
 void* bfy_buffer_make_contiguous(bfy_buffer* buf, size_t size);
 void* bfy_buffer_make_all_contiguous(bfy_buffer* buf);

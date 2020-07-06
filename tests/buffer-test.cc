@@ -452,7 +452,7 @@ TEST(Buffer, drain_on_page_boundary) {
     EXPECT_EQ(std::size(str1) + std::size(str2), bfy_buffer_get_content_len(&buf));
 
     // drain the first page -- the second one should remain
-    EXPECT_TRUE(bfy_buffer_drain(&buf, std::size(str1)));
+    EXPECT_EQ(std::size(str1), bfy_buffer_drain(&buf, std::size(str1)));
     auto constexpr n_expected_vecs = 1;
     auto vecs = std::array<bfy_iovec, n_expected_vecs>{};
     EXPECT_EQ(n_expected_vecs, bfy_buffer_peek_all(&buf, std::data(vecs), std::size(vecs)));
@@ -477,7 +477,7 @@ TEST(Buffer, drain_part_of_first_page) {
 
     // drain _part_ of the first page
     auto constexpr n_drain = std::size(str1) / 2;
-    EXPECT_TRUE(bfy_buffer_drain(&buf, n_drain));
+    EXPECT_EQ(n_drain, bfy_buffer_drain(&buf, n_drain));
     expected_readable_size -= n_drain;
 
     // part of the first page and all of the last page should remain
@@ -508,7 +508,7 @@ TEST(Buffer, drain_zero) {
     EXPECT_EQ(n_expected_writable, bfy_buffer_get_space_len(&buf));
 
     // remove nothing
-    EXPECT_TRUE(bfy_buffer_drain(&buf, 0));
+    EXPECT_EQ(0, bfy_buffer_drain(&buf, 0));
 
     // confirm that nothing changed
     auto vecs_post = std::array<bfy_iovec, n_expected_vecs>{};
@@ -524,17 +524,17 @@ TEST(Buffer, drain_zero) {
 TEST(Buffer, drain_empty_buffer) {
     // setup: build an empty buffer
     auto buf = bfy_buffer_init();
-    EXPECT_EQ(0, buffer_count_pages(&buf));
-    EXPECT_EQ(0, bfy_buffer_get_content_len(&buf));
-    EXPECT_EQ(0, bfy_buffer_get_space_len(&buf));
+    auto const expected_page_count = buffer_count_pages(&buf);
+    auto const expected_content_len = bfy_buffer_get_content_len(&buf);
+    auto const expected_space_len = bfy_buffer_get_space_len(&buf);
 
     // drain something
-    EXPECT_TRUE(bfy_buffer_drain(&buf, bfy_buffer_drain(&buf, 128)));
+    EXPECT_EQ(0, bfy_buffer_drain(&buf, bfy_buffer_drain(&buf, 128)));
 
     // confirm that nothing changed
-    EXPECT_EQ(0, buffer_count_pages(&buf));
-    EXPECT_EQ(0, bfy_buffer_get_content_len(&buf));
-    EXPECT_EQ(0, bfy_buffer_get_space_len(&buf));
+    EXPECT_EQ(expected_page_count, buffer_count_pages(&buf));
+    EXPECT_EQ(expected_content_len, bfy_buffer_get_content_len(&buf));
+    EXPECT_EQ(expected_space_len, bfy_buffer_get_space_len(&buf));
 
     // cleanup
     bfy_buffer_destruct(&buf);
@@ -542,6 +542,10 @@ TEST(Buffer, drain_empty_buffer) {
 TEST(Buffer, drain_too_much) {
     // setup: build a buffer with two pages
     auto buf = bfy_buffer_init();
+    auto const empty_page_len = buffer_count_pages(&buf);
+    auto const empty_content_len = bfy_buffer_get_content_len(&buf);
+    auto const empty_space_len = bfy_buffer_get_space_len(&buf);
+
     bfy_buffer_add_readonly(&buf, std::data(str1), std::size(str1));
     bfy_buffer_add_readonly(&buf, std::data(str2), std::size(str2));
     auto constexpr n_expected_vecs = 2;
@@ -553,12 +557,12 @@ TEST(Buffer, drain_too_much) {
     EXPECT_EQ(n_expected_writable, bfy_buffer_get_space_len(&buf));
 
     // drain more than the buffer holds
-    EXPECT_TRUE(bfy_buffer_drain(&buf, n_expected_readable * 2));
+    EXPECT_EQ(n_expected_readable, bfy_buffer_drain(&buf, n_expected_readable * 2));
 
     // confirm that the buffer is empty
-    EXPECT_EQ(0, buffer_count_pages(&buf));
-    EXPECT_EQ(0, bfy_buffer_get_content_len(&buf));
-    EXPECT_EQ(0, bfy_buffer_get_space_len(&buf));
+    EXPECT_EQ(empty_page_len, buffer_count_pages(&buf));
+    EXPECT_EQ(empty_content_len, bfy_buffer_get_content_len(&buf));
+    EXPECT_EQ(empty_space_len, bfy_buffer_get_space_len(&buf));
 
     // cleanup
     bfy_buffer_destruct(&buf);
@@ -788,9 +792,10 @@ TEST(Buffer, remove_part_of_first_page) {
     EXPECT_EQ(expected_contents_a, buffer_copyout(&a.buf));
     EXPECT_EQ(expected_contents_b, buffer_copyout(&buf));
 
-    // confirm that the target buffer got a single new page
+    // confirm that the source page count didn't change, since we only removed half of one 
     EXPECT_EQ(std::size(pre_pages_a), buffer_count_pages(&a.buf));
-    EXPECT_EQ(std::size(pre_pages_b) + 1, buffer_count_pages(&buf));
+    // confirm that the target buffer is its only page
+    EXPECT_EQ(1, buffer_count_pages(&buf));
 
     bfy_buffer_destruct(&buf);
 }
@@ -956,18 +961,16 @@ TEST(Buffer, add_reference_callback_reached_after_ownership_changed) {
 
     // transfer the contents to another buffer
     auto tgt = bfy_buffer_init();
-    fprintf(stderr, "calling bfy_buffer_add_buffer\n");
     bfy_buffer_add_buffer(&tgt, &src);
-    fprintf(stderr, "called bfy_buffer_add_buffer\n");
     EXPECT_EQ(0, bfy_buffer_get_content_len(&src));
     EXPECT_EQ(std::size(str), bfy_buffer_get_content_len(&tgt));
 
-    // confirm that transfer did not invoke the unref function
+    // confirm that buffer_add_buffer did not invoke the unref function
     EXPECT_EQ(0, io.iov_len);
     EXPECT_EQ(nullptr, io.iov_base);
 
     // confirm that draining the contents from tgt invokes the callback
-    bfy_buffer_drain(&tgt, SIZE_MAX);
+    EXPECT_EQ(std::size(str), bfy_buffer_drain(&tgt, SIZE_MAX));
     EXPECT_EQ(0, bfy_buffer_get_content_len(&tgt));
     EXPECT_EQ(std::size(str), io.iov_len);
     EXPECT_EQ(std::data(str), io.iov_base);
@@ -1028,9 +1031,7 @@ TEST(Buffer, search_match_crossing_pages) {
     BufferWithReadonlyStrings local;
 
     size_t constexpr skip = 1;
-    auto needle = std::string {};
-    needle += local.str1.substr(skip);
-    needle += local.str2.substr(0, std::size(local.str2)-1);
+    auto const needle = std::string{local.str1.substr(skip)} + std::string{local.str2.substr(0, std::size(local.str2)-1)};
     auto pos = size_t {};
 
     EXPECT_TRUE(bfy_buffer_search(&local.buf, std::data(needle), std::size(needle), &pos));
@@ -1041,10 +1042,7 @@ TEST(Buffer, search_match_crossing_multiple_pages) {
     BufferWithReadonlyStrings local;
 
     size_t constexpr skip = 1;
-    auto needle = std::string {};
-    needle += local.str1.substr(skip);
-    needle += local.str2;
-    needle += local.str3.substr(0, std::size(local.str3)-1);
+    auto const needle = local.allstrs.substr(skip, std::size(local.allstrs)-(skip*2));
     auto pos = size_t {};
 
     EXPECT_TRUE(bfy_buffer_search(&local.buf, std::data(needle), std::size(needle), &pos));
@@ -1054,21 +1052,17 @@ TEST(Buffer, search_match_crossing_multiple_pages) {
 TEST(Buffer, search_match_at_end) {
     BufferWithReadonlyStrings local;
 
-    auto needle = std::string {};
-    needle += local.str2.substr(std::size(local.str2) - 1);;
-    needle += local.str3;
+    auto const needle = local.allstrs.substr(std::size(local.str1) + std::size(local.str2)/2);
     auto pos = size_t {};
 
     EXPECT_TRUE(bfy_buffer_search(&local.buf, std::data(needle), std::size(needle), &pos));
-    EXPECT_EQ(bfy_buffer_get_content_len(&local.buf) - std::size(needle), pos);
+    EXPECT_EQ(std::size(local.allstrs) - std::size(needle), pos);
 }
 
 TEST(Buffer, search_almost_match_at_end) {
     BufferWithReadonlyStrings local;
 
-    auto needle = std::string {};
-    needle += local.str3;
-    needle += "but this part is missing";
+    auto const needle = std::string{local.str3} + " but this part is not in the buffer";
     auto pos = size_t {};
 
     EXPECT_FALSE(bfy_buffer_search(&local.buf, std::data(needle), std::size(needle), &pos));
@@ -1086,6 +1080,25 @@ TEST(Buffer, search_almost_match_at_page_break) {
 
     auto constexpr needle = std::string_view { "The Beatles" };
     auto constexpr expected_pos = std::size(str1) + std::size(str2) - 1;
+    auto pos = size_t {};
+
+    EXPECT_TRUE(bfy_buffer_search(&buf, std::data(needle), std::size(needle), &pos));
+    EXPECT_EQ(expected_pos, pos);
+
+    bfy_buffer_destruct(&buf);
+}
+
+TEST(Buffer, false_match_before_real_match_across_page_break) {
+    auto constexpr str1 = std::string_view { "Hungry Hungry " };
+    auto constexpr str2 = std::string_view { "Hungry Hippos" };
+
+    auto buf = bfy_buffer_init();
+    bfy_buffer_add_readonly(&buf, std::data(str1), std::size(str1));
+    bfy_buffer_add_readonly(&buf, std::data(str2), std::size(str2));
+    bfy_buffer_add_readonly(&buf, std::data(str3), std::size(str3));
+
+    auto constexpr needle = std::string_view { "Hungry Hungry Hippos" };
+    auto constexpr expected_pos = std::size(str1) + std::size(str2) - std::size(needle);
     auto pos = size_t {};
 
     EXPECT_TRUE(bfy_buffer_search(&buf, std::data(needle), std::size(needle), &pos));
