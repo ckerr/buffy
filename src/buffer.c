@@ -37,12 +37,6 @@ size_t_min(size_t a, size_t b) {
     return a < b ? a : b;
 }
 
-static void*
-memcpywalk(void* tgt, void const* src, size_t n) {
-    memcpy(tgt, src, n);
-    return (char*)tgt + n;
-}
-
 /// page utils
 
 static struct bfy_page const InitPage = { 0 };
@@ -104,6 +98,15 @@ page_get_space_len(struct bfy_page const* const page) {
 
 /// page memory management
 
+static size_t
+pick_capacity(size_t min, size_t requested) {
+    size_t capacity = min;
+    while (capacity < requested) {
+        capacity *= 2u;
+    }
+    return capacity;
+}
+
 static bool
 page_realloc(struct bfy_page* page, size_t requested) {
     assert(page_can_realloc(page));
@@ -119,10 +122,7 @@ page_realloc(struct bfy_page* page, size_t requested) {
 
     // decide on a new capacity
     size_t const Min = 1024;
-    size_t new_size = Min;
-    while (new_size < requested) {
-        new_size *= 2u;
-    }
+    size_t const new_size = pick_capacity(Min, requested);
 
     if (new_size <= page->size) {
         // FIXME: is there a use case for allowing shrinking?
@@ -266,26 +266,24 @@ buf_has_readable(bfy_buffer const* buf) {
 
 static bool
 buffer_insert_pages(bfy_buffer* buf, size_t pos,
-                     struct bfy_page const* new_pages,
-                     size_t new_len) {
+                    struct bfy_page const* new_pages,
+                    size_t new_len) {
     if (new_len > 0) {
         struct bfy_page const* old_pages = pages_cbegin(buf);
         size_t const old_len = buf_has_readable(buf)
                                   ? pages_cend(buf) - old_pages
                                   : 0;
         pos = size_t_min(pos, old_len);
-        const size_t pagesize = sizeof(struct bfy_page);
-        struct bfy_page* const pages = malloc(pagesize * (old_len + new_len));
-        if (pages == NULL) {
-            return false;
+        size_t const pagesize = sizeof(struct bfy_page);
+        size_t const total_len = old_len + new_len;
+        if (total_len > buf->n_pages_alloc) {
+            size_t const capacity = pick_capacity(16, total_len);
+            buf->pages = realloc(buf->pages, pagesize * capacity);
+            buf->n_pages_alloc = capacity;
         }
-        char* tgt = (char*) pages;
-        tgt = memcpywalk(tgt, old_pages, pagesize * pos);
-        tgt = memcpywalk(tgt, new_pages, pagesize * new_len);
-        memcpy(tgt, old_pages + pos, pagesize * (old_len - pos));
-        free(buf->pages);
-        buf->pages = pages;
-        buf->n_pages = old_len + new_len;
+        memmove(buf->pages + pos + new_len, old_pages + pos, pagesize * (old_len - pos));
+        memcpy(buf->pages + pos, new_pages, pagesize * new_len);
+        buf->n_pages += new_len;
 
         for (size_t i = 0; i < new_len; ++i) {
             buf->content_len += page_get_content_len(new_pages + i);
@@ -521,6 +519,7 @@ buffer_reset(bfy_buffer* buf, bool do_release) {
     free(buf->pages);
     buf->pages = NULL;
     buf->n_pages = 0;
+    buf->n_pages_alloc = 0;
     buf->content_len = 0;
 
     buf->page = recycle_me;
@@ -610,10 +609,12 @@ buffer_copyout(bfy_buffer const* buf, void* data, struct bfy_pos end) {
 
     for (size_t i = 0; i < end.page_idx; ++i, ++page) {
         struct bfy_iovec const io = page_peek_content(page);
-        tgt = memcpywalk(tgt, io.iov_base, io.iov_len);
+        memcpy(tgt, io.iov_base, io.iov_len);
+        tgt += io.iov_len;
     }
     if (end.page_pos > 0) {
-        tgt = memcpywalk(tgt, page_read_cbegin(page), end.page_pos);
+        memcpy(tgt, page_read_cbegin(page), end.page_pos);
+        tgt += end.page_pos;
     }
 
     assert(tgt - (const char*)data == end.content_pos);
@@ -760,12 +761,12 @@ buffer_pos_inc(bfy_buffer const* buf, struct bfy_pos const pos, size_t inc) {
 
     struct bfy_page const* const page = pages_cbegin(buf) + pos.page_idx;
 
-    // this is the common case and is cheaper than buffer_get_pos()
     if (page_get_content_len(page) > (pos.page_pos + inc)) {
-        struct bfy_pos ret;
-        ret = pos;
-        ret.page_pos += inc;
-        ret.content_pos += inc;
+        struct bfy_pos const ret = {
+            .page_idx = pos.page_idx,
+            .page_pos = pos.page_pos + inc,
+            .content_pos = pos.content_pos + inc
+        };
         return ret;
     }
 
@@ -863,7 +864,7 @@ bfy_buffer_search(bfy_buffer const* buf,
     return buffer_search_range(buf, begin, end, needle, needle_len, match);
 }
 
-/// bfy_buffer life cycle
+/// life cycle
 
 bfy_buffer
 bfy_buffer_init(void) {
@@ -903,6 +904,7 @@ bfy_buffer_destruct(bfy_buffer* buf) {
     free(buf->pages);
     buf->pages = NULL;
     buf->n_pages = 0;
+    buf->n_pages_alloc = 0;
 }
 
 void

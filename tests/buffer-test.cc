@@ -1106,3 +1106,25 @@ TEST(Buffer, false_match_before_real_match_across_page_break) {
 
     bfy_buffer_destruct(&buf);
 }
+
+TEST(Buffer, search_very_long_buffer) {
+    auto constexpr noise = std::string_view { "spam" };
+    auto constexpr needle = std::string_view { "eggs" };
+    auto constexpr n_noise = 20000;
+
+    auto buf = bfy_buffer_init();
+    for (size_t i = 0; i < n_noise; ++i) {
+        bfy_buffer_add_readonly(&buf, std::data(noise), std::size(noise));
+    }
+    bfy_buffer_add_readonly(&buf, std::data(needle), std::size(needle));
+    for (size_t i = 0; i < n_noise; ++i) {
+        bfy_buffer_add_readonly(&buf, std::data(noise), std::size(noise));
+    }
+
+    auto pos = size_t {};
+    auto constexpr expected_pos = std::size(noise) * n_noise;
+    EXPECT_TRUE(bfy_buffer_search(&buf, std::data(needle), std::size(needle), &pos));
+    EXPECT_EQ(expected_pos, pos);
+
+    bfy_buffer_destruct(&buf);
+}

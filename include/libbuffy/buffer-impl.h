@@ -54,6 +54,7 @@ struct bfy_buffer {
     struct bfy_page page;
     struct bfy_page* pages;
     size_t n_pages;
+    size_t n_pages_alloc;
     size_t content_len;
 };
 
