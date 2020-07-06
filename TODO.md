@@ -36,10 +36,10 @@
 | 3          | evbuffer_add_vprintf           | bfy_buffer_add_vprintf()          |
 | 3          | evbuffer_add_uint64            | bfy_buffer_add_hton_64()          |
 | 3          | evbuffer_add_reference         | bfy_buffer_add_reference()        |
-| 2          | evbuffer_read_ntoh_64          | evbuffer_remove_ntoh_64()         |
+| 2          | evbuffer_read_ntoh_64          | bfy_buffer_remove_ntoh_64()       |
 | 2          | evbuffer_read                  | |
-| 2          | evbuffer_ptr_set               | |
-| 2          | evbuffer_ptr                   | |
+| 2          | evbuffer_ptr_set               | bfy_buffer_search(pos)            |
+| 2          | evbuffer_ptr                   | bfy_buffer_search(pos)            |
 | 2          | evbuffer_add_hton_16           | bfy_buffer_add_hton_16()          |
 | 1          | evbuffer_write_atmost          | |
 | 1          | evbuffer_search                | bfy_buffer_search()               |
