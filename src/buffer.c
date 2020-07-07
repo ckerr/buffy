@@ -614,35 +614,50 @@ bfy_buffer_drain(bfy_buffer* buf, size_t wanted) {
 
 /// copyout
 
-static size_t
-buffer_copyout(bfy_buffer const* buf, void* data, struct bfy_pos end) {
-    struct bfy_page const* page = pages_cbegin(buf);
-    char* tgt = data;
+static struct bfy_iovec
+iov_drain(struct bfy_iovec io, size_t len) {
+    len = size_t_min(len, io.iov_len);
+    io.iov_base = (char*)io.iov_base + len;
+    io.iov_len -= len;
+    return io;
+}
 
-    for (size_t i = 0; i < end.page_idx; ++i, ++page) {
-        struct bfy_iovec const io = page_peek_content(page);
+static size_t
+buffer_copyout(bfy_buffer const* buf, void* content,
+               struct bfy_pos begin_pos, struct bfy_pos end_pos) {
+    char* tgt = content;
+
+    struct bfy_page const* const first_page = pages_cbegin(buf) + begin_pos.page_idx;
+    struct bfy_page const* const last_page = pages_cbegin(buf) + end_pos.page_idx;
+    for (struct bfy_page const* page = first_page; page <= last_page; ++page) {
+        struct bfy_iovec io = page_peek_content(page);
+        if (page == last_page) {
+            io.iov_len = size_t_min(io.iov_len, end_pos.page_pos);
+        }
+        if (page == first_page) {
+            io = iov_drain(io, begin_pos.page_pos);
+        }
         memcpy(tgt, io.iov_base, io.iov_len);
         tgt += io.iov_len;
     }
-    if (end.page_pos > 0) {
-        memcpy(tgt, page_read_cbegin(page), end.page_pos);
-        tgt += end.page_pos;
-    }
 
-    assert(tgt - (const char*)data == end.content_pos);
-    return tgt - (const char*)data;
+    size_t const copied_len = tgt - (const char*)content;
+    assert(copied_len == (end_pos.content_pos - begin_pos.content_pos));
+    return copied_len;
 }
 
 size_t
-bfy_buffer_copyout(bfy_buffer const* buf, void* data, size_t wanted) {
-    return buffer_copyout(buf, data, buffer_get_pos(buf, wanted));
+bfy_buffer_copyout(bfy_buffer const* buf, size_t begin, void* data, size_t len) {
+    struct bfy_pos const begin_pos = buffer_get_pos(buf, begin);
+    struct bfy_pos const end_pos = buffer_get_pos(buf, begin + len);
+    return buffer_copyout(buf, data, begin_pos, end_pos);
 }
 
 /// remove
 
 static size_t
 buffer_remove(bfy_buffer* buf, void* data, struct bfy_pos end) {
-    size_t const n_copied = buffer_copyout(buf, data, end);
+    size_t const n_copied = buffer_copyout(buf, data, buffer_get_pos(buf, 0), end);
     size_t const n_drained = buffer_drain(buf, end, 0);
     assert(n_copied == n_drained);
     return n_copied;
@@ -756,12 +771,7 @@ bfy_buffer_make_contiguous(bfy_buffer* buf, size_t wanted) {
 static struct bfy_iovec
 buffer_get_content_at_pos(bfy_buffer const* buf, struct bfy_pos pos) {
     struct bfy_page const* const page = pages_cbegin(buf) + pos.page_idx;
-    struct bfy_iovec io = page_peek_content(page);
-    if (pos.page_pos > 0) {
-        io.iov_base = (char*)io.iov_base + pos.page_pos;
-        io.iov_len -= pos.page_pos;
-    }
-    return io;
+    return iov_drain(page_peek_content(page), pos.page_pos);
 }
 
 static struct bfy_pos

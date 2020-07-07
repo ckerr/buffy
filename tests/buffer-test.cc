@@ -57,7 +57,7 @@ auto buffer_get_pages(bfy_buffer const* buf, size_t n_bytes = SIZE_MAX) {
 auto buffer_copyout(bfy_buffer const* buf, size_t n_bytes = SIZE_MAX) {
     n_bytes = std::min(n_bytes, bfy_buffer_get_content_len(buf));
     auto bytes = std::vector<char>(n_bytes);
-    bfy_buffer_copyout(buf, std::data(bytes), n_bytes);
+    bfy_buffer_copyout(buf, 0, std::data(bytes), n_bytes);
     return bytes;
 }
 
@@ -643,7 +643,7 @@ TEST(Buffer, copyout_some) {
     // copy out some of it
     auto array = std::array<char, 128>{};
     auto constexpr n_expected = std::size(local.str1) + 1;
-    auto const n_got = bfy_buffer_copyout(&local.buf, std::data(array), n_expected);
+    auto const n_got = bfy_buffer_copyout(&local.buf, 0, std::data(array), n_expected);
 
     // confirm we got what we expected
     EXPECT_EQ(n_expected, n_got);
@@ -665,7 +665,7 @@ TEST(Buffer, copyout_all) {
     // copy out some of it
     auto array = std::array<char, 128>{};
     auto const n_expected = std::size(local.allstrs);
-    auto const n_got = bfy_buffer_copyout(&local.buf, std::data(array), SIZE_MAX);
+    auto const n_got = bfy_buffer_copyout(&local.buf, 0, std::data(array), SIZE_MAX);
 
     // confirm we got what we expected
     EXPECT_EQ(n_expected, n_got);
@@ -687,7 +687,7 @@ TEST(Buffer, copyout_none) {
     // copy out some of it
     auto array = std::array<char, 64>{};
     auto constexpr n_expected = 0;
-    auto const n_got = bfy_buffer_copyout(&local.buf, std::data(array), n_expected);
+    auto const n_got = bfy_buffer_copyout(&local.buf, 0, std::data(array), n_expected);
 
     // confirm we got what we expected
     EXPECT_EQ(n_expected, n_got);
@@ -696,6 +696,33 @@ TEST(Buffer, copyout_none) {
     EXPECT_EQ(n_readable, bfy_buffer_get_content_len(&local.buf));
     EXPECT_EQ(n_writable, bfy_buffer_get_space_len(&local.buf));
     EXPECT_EQ(n_pages, buffer_count_pages(&local.buf));
+}
+
+TEST(Buffer, copyout_middle_of_first_page) {
+    auto local = BufferWithReadonlyStrings {};
+    auto array = std::array<char, 64>{};
+    auto const n_wanted = std::size(local.str1) - 3;
+    auto const len = bfy_buffer_copyout(&local.buf, 2, std::data(array), n_wanted);
+    EXPECT_EQ(len, n_wanted);
+    EXPECT_EQ(0, memcmp(std::data(local.str1)+2, std::data(array), len));
+}
+
+TEST(Buffer, copyout_first_part_of_last_page) {
+    auto local = BufferWithReadonlyStrings {};
+    auto array = std::array<char, 64>{};
+    auto const n_wanted = std::size(local.str3) - 1;
+    auto const len = bfy_buffer_copyout(&local.buf, std::size(local.str1) + std::size(local.str2), std::data(array), n_wanted);
+    EXPECT_EQ(len, n_wanted);
+    EXPECT_EQ(0, memcmp(std::data(local.str3), std::data(array), len));
+}
+
+TEST(Buffer, copyout_all_but_first_and_last_char) {
+    auto local = BufferWithReadonlyStrings {};
+    auto array = std::array<char, 64>{};
+    auto const n_wanted = std::size(local.allstrs) - 2;
+    auto const len = bfy_buffer_copyout(&local.buf, 1, std::data(array), n_wanted);
+    EXPECT_EQ(len, n_wanted);
+    EXPECT_EQ(0, memcmp(std::data(local.allstrs)+1, std::data(array), len));
 }
 
 /// hton, ntoh functions
