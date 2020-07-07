@@ -22,6 +22,7 @@ endmacro()
 package_add_test(buffer-test
                  buffer-test.cc)
 
+# ctest -D ExperimentalMemCheck
 find_program(MEMORYCHECK_COMMAND valgrind)
 set(MEMORYCHECK_COMMAND_OPTIONS "--leak-check=full --error-exitcode=1")
 include(CTest)

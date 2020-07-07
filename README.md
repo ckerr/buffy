@@ -4,12 +4,11 @@ libbuffy is an embeddable, MIT-licensed, C-language, zero-dependency
 memory buffer class inspired by libevent's `evbuffer`. It consists of
 just a few files that can be dropped into your own project as-is.
 
-Common uses:
+Some common uses:
 
-* Preparing data before writing it to a file or to the network
-* Buffering data that's been read in for processing
-* Building data buffers or strings without having to know the length
-  in advance or focus on memory management.
+* A pipeline between data producers and consumers
+* Queueing data that's been received or about to be sent over the network
+* Building strings or data buffers without worrying about memory management
 
 Buffy is designed to be as efficient as possible despite being a
 general-purpose tool. It avoids unnecessary memory allocations and
@@ -60,19 +59,20 @@ void bfy_buffer_destruct(bfy_buffer*);
 ### Adding Data
 
 ```c
-bool bfy_buffer_add(bfy_buffer* buf, void const* addme, size_t len);
-bool bfy_buffer_add_ch(bfy_buffer* buf, char addme);
-bool bfy_buffer_add_printf(bfy_buffer* buf, char const* fmt, ...);
-bool bfy_buffer_add_vprintf(bfy_buffer* buf, char const* fmt, va_list args);
-bool bfy_buffer_add_hton_u8 (bfy_buffer* buf, uint8_t  addme);
-bool bfy_buffer_add_hton_u16(bfy_buffer* buf, uint16_t addme);
-bool bfy_buffer_add_hton_u32(bfy_buffer* buf, uint32_t addme);
-bool bfy_buffer_add_hton_u64(bfy_buffer* buf, uint64_t addme);
+size_t bfy_buffer_add(bfy_buffer* buf, void const* addme, size_t len);
+size_t bfy_buffer_add_ch(bfy_buffer* buf, char addme);
+size_t bfy_buffer_add_printf(bfy_buffer* buf, char const* fmt, ...);
+size_t bfy_buffer_add_vprintf(bfy_buffer* buf, char const* fmt, va_list args);
+size_t bfy_buffer_add_hton_u8 (bfy_buffer* buf, uint8_t  addme);
+size_t bfy_buffer_add_hton_u16(bfy_buffer* buf, uint16_t addme);
+size_t bfy_buffer_add_hton_u32(bfy_buffer* buf, uint32_t addme);
+size_t bfy_buffer_add_hton_u64(bfy_buffer* buf, uint64_t addme);
 ```
 
 Of these functions, `bfy_buffer_add()` is the key: it copies the specified
 bytes into the free space at the end of the last page, marking that space
-as content. If not enough space is available, more is allocated.
+as content. If not enough space is available, more is allocated. The number
+of bytes added is returned.
 
 The rest are convenience wrappers: `add_ch()` adds a single character;
 `add_printf() / add_vprintf()` are printf-like functions that add to the
@@ -81,10 +81,10 @@ network byte order before ading them to he buffer.. Like `bfy_buffer_add()`,
 these all try to append to the end of the current page.
 
 ```c
-bool bfy_buffer_add_buffer(bfy_buffer* buf, bfy_buffer* src);
-bool bfy_buffer_add_readonly(bfy_buffer* buf, const void* data, size_t len);
-bool bfy_buffer_add_reference(bfy_buffer* buf, const void* data, size_t len,
-                              bfy_unref_cb* cb, void* user_data);
+size_t bfy_buffer_add_buffer(bfy_buffer* buf, bfy_buffer* src);
+size_t bfy_buffer_add_readonly(bfy_buffer* buf, const void* data, size_t len);
+size_t bfy_buffer_add_reference(bfy_buffer* buf, const void* data, size_t len,
+                                bfy_unref_cb* cb, void* user_data);
 ```
 
 These functions add pre-existing content into the buffer by embedding it
@@ -92,9 +92,9 @@ rather than duplicating it.
 
 `add_buffer()` transfers the contents of one buffer to another.
 
-`add_reference()` adds a new page that embeds content that is managed
-outside of bfy. When bfy is done with the page, the unref callback passed
-to `add_reference()` is called.
+`add_reference()` adds a new page that embeds content managed outside of bfy.
+When bfy is done with the page, the unref callback passed to `add_reference()`
+is called.
 
 `add_readonly()` adds a new page that embeds read-only content.
 
@@ -103,16 +103,17 @@ to `add_reference()` is called.
 ```c
 size_t bfy_buffer_remove(bfy_buffer* buf, void* setme, size_t len);
 char* bfy_buffer_remove_string(bfy_buffer* buf, size_t* len);
-bool bfy_buffer_remove_ntoh_u8 (bfy_buffer* buf, uint8_t* setme);
-bool bfy_buffer_remove_ntoh_u16(bfy_buffer* buf, uint16_t* setme);
-bool bfy_buffer_remove_ntoh_u32(bfy_buffer* buf, uint32_t* setme);
-bool bfy_buffer_remove_ntoh_u64(bfy_buffer* buf, uint64_t* setme);
+int bfy_buffer_remove_ntoh_u8 (bfy_buffer* buf, uint8_t* setme);
+int bfy_buffer_remove_ntoh_u16(bfy_buffer* buf, uint16_t* setme);
+int bfy_buffer_remove_ntoh_u32(bfy_buffer* buf, uint32_t* setme);
+int bfy_buffer_remove_ntoh_u64(bfy_buffer* buf, uint64_t* setme);
 ```
 
 Of these functions, `bfy_buffer_remove()` is the key: it moves the
 next `len` bytes of content from the front of the buffer to the
-specified location. Just as content is added with `bfy_buffer_add*()`,
-it is consumed with `bfy_buffer_remove*()`.
+specified location and returns the number of bytes consumed. Just as
+content is added with `bfy_buffer_add*()`, it is consumed with
+`bfy_buffer_remove*()`.
 
 The others are convenience wrappers: `bfy_buffer_remove_ntoh*()` read
 numbers from big-endian network byte order into the host machine's
@@ -120,7 +121,7 @@ byte order, and `bfy_buffer_remove_string()` will remove the buffer
 into a newly-allocated string.
 
 ```c
-bool bfy_buffer_remove_buffer(bfy_buffer* buf, bfy_buffer* tgt, size_t len);
+int bfy_buffer_remove_buffer(bfy_buffer* buf, bfy_buffer* tgt, size_t len);
 ```
 
 This moves the first `len` bytes of content from the source buffer to
@@ -140,14 +141,14 @@ from the buffer without draining it afterwards.
 ## Searching
 
 ```c
-bool bfy_buffer_search(bfy_buffer const* buf,
-                       void const* needle, size_t needle_len,
-                       size_t* match);
+int bfy_buffer_search(bfy_buffer const* buf,
+                      void const* needle, size_t needle_len,
+                      size_t* match);
 
-bool bfy_buffer_search_range(bfy_buffer const* buf,
-                             size_t begin, size_t end,
-                             void const* needle, size_t needle_len,
-                             size_t* match);
+int bfy_buffer_search_range(bfy_buffer const* buf,
+                            size_t begin, size_t end,
+                            void const* needle, size_t needle_len,
+                            size_t* match);
 ```
 
 `bfy_buffer_search_range()` searches for a string inside the [begin..end)
@@ -166,7 +167,7 @@ single page before you start filling it with `bfy_buffer_add*()`.
 
 ```c
 size_t bfy_buffer_get_space_len(bfy_buffer const* buf);
-bool bfy_buffer_ensure_space(bfy_buffer* buf, size_t len);
+int bfy_buffer_ensure_space(bfy_buffer* buf, size_t len);
 ```
 
 ### Peek / Reserve / Commit
@@ -222,5 +223,18 @@ size_t bfy_buffer_peek(bfy_buffer const* buf, size_t size,
                        struct bfy_iovec* vec_out, size_t vec_len);
 size_t bfy_buffer_peek_all(bfy_buffer const* buf,
                            struct bfy_iovec* vec_out, size_t vec_len);
-bool bfy_buffer_add_pagebreak(bfy_buffer* buf);
+int bfy_buffer_add_pagebreak(bfy_buffer* buf);
 ```
+
+## Comparison to `evbuffer`
+
+libbuffy is inspired by
+[libevent](https://libevent.org/)'s [evbuffer](http://www.wangafu.net/~nickm/libevent-book/Ref7_evbuffer.html),
+so it's no surprise that they have similar APIs.
+But the software world is full of event loop tools, so if you're using
+[glib](https://github.com/GNOME/glib) or
+[libuv](https://libuv.org/) or
+[libev](http://software.schmorp.de/pkg/libev.html) or
+[libhv](https://github.com/ithewei/libhv)
+instead -- or none of the above! -- you may find libbuffy to be more accessible.
+

@@ -73,10 +73,6 @@ static bool
 page_is_recyclable(struct bfy_page const* const page) {
     return page_is_writable(page);
 }
-static bool
-page_has_readable(struct bfy_page const* const page) {
-    return page->write_pos > page->read_pos;
-}
 
 static void*
 page_read_begin(struct bfy_page const* const page) {
@@ -87,6 +83,11 @@ page_read_cbegin(struct bfy_page const* const page) {
     return page->data + page->read_pos;
 }
 
+static void*
+page_write_cbegin(struct bfy_page const* const page) {
+    return page->data + page->write_pos;
+}
+
 static size_t
 page_get_content_len(struct bfy_page const* const page) {
     return page->write_pos - page->read_pos;
@@ -94,6 +95,86 @@ page_get_content_len(struct bfy_page const* const page) {
 static size_t
 page_get_space_len(struct bfy_page const* const page) {
     return page->size - page->write_pos;
+}
+
+///  change notifications
+
+static void
+buffer_reset_changed_info(bfy_buffer* buf) {
+    struct bfy_changed_cb_info const info = {
+        .orig_size = bfy_buffer_get_content_len(buf)
+    };
+    buf->changed_info = info;
+}
+
+void
+bfy_buffer_set_changed_cb(bfy_buffer* buf, bfy_changed_cb* cb, void* cb_data) {
+    buf->changed_cb = cb;
+    buf->changed_data = cb_data;
+    buffer_reset_changed_info(buf);
+}
+
+static void
+buffer_check_changed_cb(bfy_buffer* buf) {
+    if (buf->changed_cb == NULL) {
+        return;
+    }
+    if (buf->changed_muted != 0) {
+        return;
+    }
+    if (buf->changed_coalescing != 0) {
+        return;
+    }
+    if (buf->changed_info.n_added == 0 && buf->changed_info.n_deleted == 0) {
+        return;
+    }
+
+    buf->changed_cb(buf, &buf->changed_info, buf->changed_data);
+    buffer_reset_changed_info(buf);
+}
+
+static void
+buffer_record_content_added(bfy_buffer* buf, size_t n) {
+    buf->content_len += n;
+
+    if (buf->changed_muted == 0) {
+        buf->changed_info.n_added += n;
+        buffer_check_changed_cb(buf);
+    }
+}
+
+static void
+buffer_record_content_removed(bfy_buffer* buf, size_t n) {
+    buf->content_len -= n;
+
+    if (buf->changed_muted == 0) {
+        buf->changed_info.n_deleted += n;
+        buffer_check_changed_cb(buf);
+    }
+}
+
+void
+bfy_buffer_mute_change_events(bfy_buffer* buf) {
+    ++buf->changed_muted;
+}
+
+void
+bfy_buffer_unmute_change_events(bfy_buffer* buf) {
+    if (--buf->changed_muted == 0) {
+        buffer_check_changed_cb(buf);
+    }
+}
+
+void
+bfy_buffer_begin_coalescing_change_events(bfy_buffer* buf) {
+    ++buf->changed_coalescing;
+}
+
+void
+bfy_buffer_end_coalescing_change_events(bfy_buffer* buf) {
+    if(--buf->changed_coalescing == 0) {
+        buffer_check_changed_cb(buf);
+    }
 }
 
 /// page memory management
@@ -107,7 +188,7 @@ pick_capacity(size_t min, size_t requested) {
     return capacity;
 }
 
-static bool
+static int
 page_realloc(struct bfy_page* page, size_t requested) {
     assert(page_can_realloc(page));
 
@@ -117,39 +198,37 @@ page_realloc(struct bfy_page* page, size_t requested) {
             free(page->data);
             page->data = NULL;
         }
-        return true;
+        return 0;
     }
 
     // decide on a new capacity
     size_t const Min = 1024;
     size_t const new_size = pick_capacity(Min, requested);
-
     if (new_size <= page->size) {
-        // FIXME: is there a use case for allowing shrinking?
-        return true;
+        return 0;
     }
 
     void* new_data = realloc(page->data, new_size);
-    if (new_data == NULL) {
-        errno = ENOMEM;
-        return false;
-    } else {
+    if (new_data != NULL) {
         page->data = new_data;
         page->size = new_size;
-        return true;
+        return 0;
     }
+
+    errno = ENOMEM;
+    return -1;
 }
 
-static bool
+static int
 page_ensure_space_len(struct bfy_page* page, size_t wanted) {
     size_t const space = page_get_space_len(page);
     if (wanted <= space) {
-        return true;
+        return 0;
     }
     if (page_can_realloc(page)) {
        return page_realloc(page, page->size + (wanted - space));
     }
-    return false;
+    return -1;
 }
 
 static void
@@ -205,7 +284,8 @@ buffer_get_pos(bfy_buffer const* buf, size_t content_pos) {
 
 size_t
 bfy_buffer_get_content_len(bfy_buffer const* buf) {
-    return buffer_get_pos(buf, SIZE_MAX).content_pos;
+    assert(buf->content_len == buffer_get_pos(buf, SIZE_MAX).content_pos);
+    return buf->content_len;
 }
 
 size_t
@@ -244,7 +324,7 @@ bfy_buffer_peek(bfy_buffer const* buf, size_t wanted,
         if (vec < vec_end) {
             struct bfy_iovec io = page_peek_content(it);
             io.iov_len = pos.page_pos;
-            *vec++ = io;
+            *vec = io;
         }
     }
 
@@ -259,47 +339,67 @@ bfy_buffer_peek_all(bfy_buffer const* buf,
 
 /// adding pages
 
-static bool
-buf_has_readable(bfy_buffer const* buf) {
-    return page_has_readable(pages_cbegin(buf));
-}
-
-static bool
+static int
 buffer_insert_pages(bfy_buffer* buf, size_t pos,
                     struct bfy_page const* new_pages,
                     size_t new_len) {
-    if (new_len > 0) {
-        struct bfy_page const* old_pages = pages_cbegin(buf);
-        size_t const old_len = buf_has_readable(buf)
-                                  ? pages_cend(buf) - old_pages
-                                  : 0;
-        pos = size_t_min(pos, old_len);
-        size_t const pagesize = sizeof(struct bfy_page);
-        size_t const total_len = old_len + new_len;
-        if (total_len > buf->n_pages_alloc) {
-            size_t const capacity = pick_capacity(16, total_len);
-            buf->pages = realloc(buf->pages, pagesize * capacity);
-            buf->n_pages_alloc = capacity;
-        }
-        memmove(buf->pages + pos + new_len, old_pages + pos, pagesize * (old_len - pos));
-        memcpy(buf->pages + pos, new_pages, pagesize * new_len);
-        buf->n_pages += new_len;
-
-        for (size_t i = 0; i < new_len; ++i) {
-            buf->content_len += page_get_content_len(new_pages + i);
-        }
+    if (new_len == 0 || new_pages == NULL) {
+        return 0;
     }
-    return true;
+
+    // if we have nothing, use buf->page
+    if (new_len == 1 && buf->pages == NULL && buf->page.data == NULL) {
+        buf->page = *new_pages;
+        buffer_record_content_added(buf, page_get_content_len(new_pages));
+        return 0;
+    }
+
+    // ensure we have enough space in buf->pages
+    size_t n_pages_alloc = buffer_count_pages(buf) + new_len;
+    size_t const pagesize = sizeof(struct bfy_page);
+    if (n_pages_alloc > buf->n_pages_alloc) {
+        n_pages_alloc = pick_capacity(16, n_pages_alloc);
+        void* pages = realloc(buf->pages, pagesize * n_pages_alloc);
+        if (pages == NULL) {
+            return -1;
+        }
+        buf->pages = pages;
+        buf->n_pages_alloc = n_pages_alloc;
+    }
+
+    // if we had 1 page and are inserting more, handle the special case
+    // of moving the single buf->page into the multipage array
+    if (buf->n_pages == 0 && buf->pages != NULL && buf->page.data != NULL) {
+        buf->n_pages = 1;
+        *buf->pages = buf->page;
+        buf->page = InitPage;
+    }
+
+    // insert new_pages into buf->pages
+    pos = size_t_min(pos, buf->n_pages);
+    if (buf->n_pages > pos) {
+        memmove(buf->pages + pos + new_len, buf->pages + pos, pagesize * (buf->n_pages - pos));
+    }
+    memcpy(buf->pages + pos, new_pages, pagesize * new_len);
+    buf->n_pages += new_len;
+
+    // record the new content
+    size_t new_content_len = 0;
+    for (size_t i = 0; i < new_len; ++i) {
+        new_content_len += page_get_content_len(new_pages + i);
+    }
+    buffer_record_content_added(buf, new_content_len);
+    return 0;
 }
 
-static bool
+static int
 buffer_append_pages(bfy_buffer* tgt,
                     struct bfy_page const* new_pages,
                     size_t new_len) {
     return buffer_insert_pages(tgt, buffer_count_pages(tgt),
                                new_pages, new_len);
 }
-static bool
+static int
 buffer_prepend_pages(bfy_buffer* tgt,
                       struct bfy_page const* new_pages,
                       size_t new_len) {
@@ -312,14 +412,19 @@ typedef bool (page_test)(struct bfy_page const* page);
 
 static struct bfy_page*
 buffer_get_usable_back(bfy_buffer* buf, page_test* test) {
+    // if the existing last page is suitable, return it
     struct bfy_page* page = pages_back(buf);
     if (test(page)) {
         return page;
     }
-    if (!buffer_append_pages(buf, &InitPage, 1)) {
-        return NULL;
+
+    // if a new page would be suitable, append one and return it
+    if (test(&InitPage)) {
+        buffer_append_pages(buf, &InitPage, 1);
+        return pages_back(buf);
     }
-    return pages_back(buf);
+
+    return NULL;
 }
 
 static struct bfy_page*
@@ -332,7 +437,7 @@ buffer_get_writable_back(bfy_buffer* buf) {
 static struct bfy_iovec
 page_peek_space(struct bfy_page const* page) {
     struct bfy_iovec vec = {
-        .iov_base = (void*) (page->data + page->write_pos),
+        .iov_base = (void*) page_write_cbegin(page),
         .iov_len = page_get_space_len(page)
     };
     return vec;
@@ -349,7 +454,7 @@ bfy_buffer_reserve_space(struct bfy_buffer* buf, size_t wanted) {
     return bfy_buffer_peek_space(buf);
 }
 
-size_t
+int
 bfy_buffer_commit_space(struct bfy_buffer* buf, size_t len) {
     size_t n_committed = 0;
 
@@ -360,42 +465,44 @@ bfy_buffer_commit_space(struct bfy_buffer* buf, size_t len) {
         len = size_t_min(len, n_writable);
         page->write_pos += len;
         n_committed = len;
-        buf->content_len += len;
+        buffer_record_content_added(buf, len);
     }
 
-    return n_committed;
+    return n_committed == len ? 0 : -1;
 }
 
-bool
+int
 bfy_buffer_ensure_space(bfy_buffer* buf, size_t len) {
     struct bfy_page* page = pages_back(buf);
     if (page_is_writable(page)) {
         size_t const space_len = page_get_space_len(page);
         if (len <= space_len) {
-            return true;
+            // there's enough free space at the end of the page,
+            // no extra work necessary
+            return 0;
         }
         if (len <= space_len + page->read_pos) {
+            // page has enough space but it's not contiguous,
+            // so make it contiguous by moving content to the
+            // front of the page
             memmove(page->data, page->data + page->read_pos, page_get_content_len(page));
             page->write_pos -= page->read_pos;
             page->read_pos = 0;
-            return true;
+            return 0;
         }
     }
 
-    page = buffer_get_usable_back(buf, page_can_realloc);
-    return (page != NULL) && page_ensure_space_len(page, len);
-}
+    if ((page = buffer_get_usable_back(buf, page_can_realloc))) {
+        return page_ensure_space_len(page, len);
+    }
 
-bool
-bfy_buffer_expand(bfy_buffer* buf, size_t len) {
-    return bfy_buffer_ensure_space(buf, len);
+    return -1;
 }
 
 /// add
 
-bool
-bfy_buffer_add_readonly(bfy_buffer* buf,
-        const void* data, size_t len) {
+int
+bfy_buffer_add_readonly(bfy_buffer* buf, const void* data, size_t len) {
     struct bfy_page const page = {
         .data = (void*) data,
         .size = len,
@@ -406,108 +513,127 @@ bfy_buffer_add_readonly(bfy_buffer* buf,
     return buffer_append_pages(buf, &page, 1);
 }
 
-bool bfy_buffer_add_reference(bfy_buffer* buf,
-        const void* data, size_t len, 
-        bfy_unref_cb* cb, void* unref_arg) {
+int
+bfy_buffer_add_reference(bfy_buffer* buf,
+                         const void* data, size_t len, 
+                         bfy_unref_cb* cb, void* unref_arg) {
     struct bfy_page const page = {
         .data = (void*) data,
         .size = len,
         .read_pos = 0,
         .write_pos = len,
-        .flags = BFY_PAGE_FLAGS_READONLY,
+        .flags = BFY_PAGE_FLAGS_UNMANAGED,
         .unref_cb = cb,
         .unref_arg = unref_arg
     };
     return buffer_append_pages(buf, &page, 1);
 }
 
-bool
+int
 bfy_buffer_add(bfy_buffer* buf, const void* data, size_t len) {
     struct bfy_iovec const io = bfy_buffer_reserve_space(buf, len);
     if (data == NULL || io.iov_base == NULL || io.iov_len < len) {
-        return false;
+        return -1;
     }
     memcpy(io.iov_base, data, len);
-    bfy_buffer_commit_space(buf, len);
-    return true;
+    return bfy_buffer_commit_space(buf, len);
 }
 
-bool
+int
 bfy_buffer_add_ch(bfy_buffer* buf, char addme) {
     return bfy_buffer_add(buf, &addme, 1);
 }
 
-bool
+int
 bfy_buffer_add_printf(bfy_buffer* buf, char const* fmt, ...) {
     va_list args;
     va_start(args, fmt);
-    bool const ret = bfy_buffer_add_vprintf(buf, fmt, args);
+    int const ret = bfy_buffer_add_vprintf(buf, fmt, args);
     va_end(args);
     return ret;
 }
 
-bool
+int
 bfy_buffer_add_vprintf(bfy_buffer* buf, char const* fmt, va_list args_in) {
-    // see if we can print it into the free space
-    struct bfy_iovec io = bfy_buffer_peek_space(buf);
+    // see if we can print it into already-available space
+    struct bfy_iovec space = bfy_buffer_peek_space(buf);
     va_list args;
     va_copy(args, args_in);
-    size_t n = vsnprintf(io.iov_base, io.iov_len, fmt, args);
-    size_t const space_wanted = n + 1; // +1 for trailing '\0'
+    size_t n = vsnprintf(space.iov_base, space.iov_len, fmt, args);
     va_end(args);
 
     // if not, make some more free space and try again
-    if (space_wanted > io.iov_len) {
-        io = bfy_buffer_reserve_space(buf, space_wanted);
+    size_t space_wanted = n;
+    if (space_wanted < SIZE_MAX) {
+        // add +1 for the the nul space ('\0').
+        // NOTE: we *must* have enough space for the nul so that vsnprintf
+        // does not truncate the string, but note that the nul space isn't
+        // included in commit_space() because embedding nuls into the buffer
+        // defeats the purpose of using bfy as a stringbuilder -- if someone
+        // calls add_printf() in a loop then remove_string(), the result
+        // should be one long uninterrupted string.
+        ++space_wanted;
+    }
+    if (space_wanted > space.iov_len) {
+        space = bfy_buffer_reserve_space(buf, space_wanted);
         va_copy(args, args_in);
-        n = vsnprintf(io.iov_base, io.iov_len, fmt, args);
+        n = vsnprintf(space.iov_base, space.iov_len, fmt, args);
         va_end(args);
     }
 
-    if (n < io.iov_len) {
-        bfy_buffer_commit_space(buf, n);
+    // if we succeeded, commit our work
+    if (n < space.iov_len) {
+        return bfy_buffer_commit_space(buf, n);
     }
-    return n < io.iov_len;
+
+    return -1;
 }
 
-bool
+int
 bfy_buffer_add_hton_u8(struct bfy_buffer* buf, uint8_t addme) {
     return bfy_buffer_add(buf, &addme, 1);
 }
 
-bool
+int
 bfy_buffer_add_hton_u16(struct bfy_buffer* buf, uint16_t addme) {
     uint16_t const be = htobe16(addme);
     return bfy_buffer_add(buf, &be, sizeof(be));
 }
 
-bool
+int
 bfy_buffer_add_hton_u32(struct bfy_buffer* buf, uint32_t addme) {
     uint32_t const be = htobe32(addme);
     return bfy_buffer_add(buf, &be, sizeof(be));
 }
 
-bool
+int
 bfy_buffer_add_hton_u64(struct bfy_buffer* buf, uint64_t addme) {
     uint64_t const be = htobe64(addme);
     return bfy_buffer_add(buf, &be, sizeof(be));
 }
 
-bool
+int
 bfy_buffer_add_pagebreak(struct bfy_buffer* buf) {
     struct bfy_page page = InitPage;
     return buffer_append_pages(buf, &page, 1);
 }
 
-bool
+int
 bfy_buffer_add_buffer(bfy_buffer* buf, bfy_buffer* src) {
-    return bfy_buffer_remove_buffer(src, buf, SIZE_MAX);
+    size_t const new_content_len = bfy_buffer_get_content_len(src);
+    return new_content_len == bfy_buffer_remove_buffer(src, buf, new_content_len) ? 0 : -1;
 }
 
 /// drain
 
 enum {
+    // pages will usually release their memory when draining,
+    // but we need to skip that if the page is being given
+    // to another buffer
     DRAIN_FLAG_NORELEASE = (1<<0),
+
+    // buffer usually recycles a page for subsequent use,
+    // but we need to skip that if the buffer is being destroyed
     DRAIN_FLAG_NORECYCLE = (1<<1)
 };
 
@@ -539,9 +665,8 @@ buffer_drain_all(bfy_buffer* buf, int flags) {
     buf->pages = NULL;
     buf->n_pages = 0;
     buf->n_pages_alloc = 0;
-    buf->content_len = 0;
-
     buf->page = recycle_me;
+    buffer_record_content_removed(buf, buf->content_len);
 
     return drained;
 }
@@ -553,6 +678,7 @@ bfy_buffer_drain_all(bfy_buffer* buf) {
 
 static void
 buffer_forget_first_n_pages(bfy_buffer* buf, size_t len) {
+    len = size_t_min(len, buffer_count_pages(buf));
     struct bfy_page* const begin = pages_begin(buf);
 
     for (struct bfy_page* it=begin, *const end=it + len; it != end; ++it) {
@@ -566,8 +692,10 @@ buffer_forget_first_n_pages(bfy_buffer* buf, size_t len) {
             memmove(begin, begin + len, pagesize * (end - begin - len));
             buf->n_pages -= len;
         } else {
-            buf->n_pages = 1;
-            buf->pages[0] = InitPage;
+            free(buf->pages);
+            buf->pages = NULL;
+            buf->n_pages = 0;
+            buf->n_pages_alloc = 0;
         }
     }
 }
@@ -603,7 +731,7 @@ buffer_drain(bfy_buffer* const buf, struct bfy_pos pos, int flags) {
     }
 
     size_t const drained = pos.content_pos;
-    buf->content_len -= pos.content_pos;
+    buffer_record_content_removed(buf, drained);
     return drained;
 }
 
@@ -674,55 +802,82 @@ bfy_buffer_remove(bfy_buffer* buf, void* data, size_t wanted) {
     return buffer_remove(buf, data, buffer_get_pos(buf, wanted));
 }
 
+char const*
+bfy_buffer_peek_string(bfy_buffer* buf, size_t* setme_len) {
+    // ensure the string we return is zero-terminated,
+    // but don't commit the nul because the user may
+    // keep building a string and we don't want embedded nuls
+    bfy_buffer_mute_change_events(buf);
+    char const nul = '\0';
+    bfy_buffer_add_ch(buf, nul);
+    bfy_buffer_make_all_contiguous(buf);
+    struct bfy_page* page = pages_begin(buf);
+    page->write_pos -= sizeof(nul);
+    bfy_buffer_unmute_change_events(buf);
+
+    if (setme_len != NULL) {
+        *setme_len = page_get_content_len(page);
+    }
+
+    return page_read_cbegin(page);
+}
+
 char*
 bfy_buffer_remove_string(bfy_buffer* buf, size_t* setme_len) {
     struct bfy_pos const pos = buffer_get_pos(buf, SIZE_MAX);
+    size_t moved_len = 0;
     char* ret = malloc(pos.content_pos + 1);  // +1 for '\0'
-    size_t const moved_len = buffer_remove(buf, ret, pos);
-    assert(moved_len == pos.content_pos);
-    ret[moved_len] = '\0';
+    if (ret != NULL) {
+        moved_len = buffer_remove(buf, ret, pos);
+        assert(moved_len == pos.content_pos);
+        ret[moved_len] = '\0';
+    }
     if (setme_len != NULL) {
         *setme_len = moved_len;
     }
     return ret;
 }
 
-bool
+int
 bfy_buffer_remove_ntoh_u8(struct bfy_buffer* buf, uint8_t* setme) {
-    return bfy_buffer_remove(buf, setme, sizeof(uint8_t));
+    size_t const len = bfy_buffer_remove(buf, setme, sizeof(*setme));
+    return len == sizeof(*setme) ? 0 : -1;
 }
 
-bool
+int
 bfy_buffer_remove_ntoh_u16(struct bfy_buffer* buf, uint16_t* setme) {
     uint16_t tmp;
-    bool success;
-    if ((success = bfy_buffer_remove(buf, &tmp, sizeof(tmp)))) {
+    size_t const len = bfy_buffer_remove(buf, &tmp, sizeof(tmp));
+    if (len == sizeof(tmp)) {
         *setme = be16toh(tmp);
+        return 0;
     }
-    return success;
+    return -1;
 }
 
-bool
+int
 bfy_buffer_remove_ntoh_u32(struct bfy_buffer* buf, uint32_t* setme) {
     uint32_t tmp;
-    bool success;
-    if ((success = bfy_buffer_remove(buf, &tmp, sizeof(tmp)))) {
+    size_t const len = bfy_buffer_remove(buf, &tmp, sizeof(tmp));
+    if (len == sizeof(tmp)) {
         *setme = be32toh(tmp);
+        return 0;
     }
-    return success;
+    return -1;
 }
 
-bool
+int
 bfy_buffer_remove_ntoh_u64(struct bfy_buffer* buf, uint64_t* setme) {
     uint64_t tmp;
-    bool success;
-    if ((success = bfy_buffer_remove(buf, &tmp, sizeof(tmp)))) {
+    size_t const len = bfy_buffer_remove(buf, &tmp, sizeof(tmp));
+    if (len == sizeof(tmp)) {
         *setme = be64toh(tmp);
+        return 0;
     }
-    return success;
+    return -1;
 }
 
-bool
+size_t
 bfy_buffer_remove_buffer(bfy_buffer* buf, bfy_buffer* tgt, size_t wanted) {
     struct bfy_pos end = buffer_get_pos(buf, wanted);
 
@@ -735,15 +890,10 @@ bfy_buffer_remove_buffer(bfy_buffer* buf, bfy_buffer* tgt, size_t wanted) {
         bfy_buffer_add(tgt, page_read_cbegin(page), end.page_pos);
     }
 
-    return buffer_drain(buf, end, DRAIN_FLAG_NORECYCLE | DRAIN_FLAG_NORELEASE) == end.content_pos;
+    return buffer_drain(buf, end, DRAIN_FLAG_NORECYCLE | DRAIN_FLAG_NORELEASE);
 }
 
 // make_contiguous
-
-void*
-bfy_buffer_make_all_contiguous(bfy_buffer* buf) {
-    return bfy_buffer_make_contiguous(buf, SIZE_MAX);
-}
 
 void*
 bfy_buffer_make_contiguous(bfy_buffer* buf, size_t wanted) {
@@ -754,9 +904,7 @@ bfy_buffer_make_contiguous(bfy_buffer* buf, size_t wanted) {
         return page_read_begin(pages_begin(buf));
     }
 
-    // FIXME: if page->size >= wanted then do the copies there
-
-    // FIXME: copyout instead of remove so we can reuse pages[0]
+    bfy_buffer_mute_change_events(buf);
 
     // build a contiguous page
     int8_t* data = malloc(pos.content_pos);
@@ -769,7 +917,13 @@ bfy_buffer_make_contiguous(bfy_buffer* buf, size_t wanted) {
         .write_pos = n_moved
     };
     buffer_prepend_pages(buf, &newpage, 1);
+    bfy_buffer_unmute_change_events(buf);
     return page_read_begin(pages_begin(buf));
+}
+
+void*
+bfy_buffer_make_all_contiguous(bfy_buffer* buf) {
+    return bfy_buffer_make_contiguous(buf, SIZE_MAX);
 }
 
 /// search
@@ -816,9 +970,9 @@ buffer_contains_at(bfy_buffer const* buf, struct bfy_pos at,
         return false;
     }
     if (io.iov_len >= needle_len) {
-        return !memcmp(io.iov_base, needle, needle_len);
+        return memcmp(io.iov_base, needle, needle_len) == 0;
     }
-    if (memcmp(io.iov_base, needle, io.iov_len)) {
+    if (memcmp(io.iov_base, needle, io.iov_len) != 0) {
         return false;
     }
     // FIXME: recursive function could be smashed
@@ -836,7 +990,7 @@ buffer_search_iovec(struct bfy_iovec const io,
 
     while ((walk = memchr(walk, *(char const*)needle, end - walk))) {
         size_t const len = size_t_min(needle_len, end - walk);
-        if (!memcmp(walk, needle, len)) {
+        if (memcmp(walk, needle, len) == 0) {
             return walk - begin;
         }
         ++walk;
@@ -844,7 +998,7 @@ buffer_search_iovec(struct bfy_iovec const io,
     return io.iov_len;
 }
 
-static bool
+static int
 buffer_search_range(bfy_buffer const* buf,
                     struct bfy_pos begin, struct bfy_pos end,
                     void const* needle, size_t needle_len,
@@ -858,7 +1012,7 @@ buffer_search_range(bfy_buffer const* buf,
             struct bfy_pos test = buffer_pos_inc(buf, walk, hit);
             if (buffer_contains_at(buf, test, needle, needle_len)) {
                 *setme = test.content_pos;
-                return true;
+                return 0;
             }
             walk = buffer_pos_inc(buf, walk, hit + 1);
             continue;
@@ -866,10 +1020,10 @@ buffer_search_range(bfy_buffer const* buf,
         walk = buffer_pos_next_page(buf, walk);
     }
 
-    return false;
+    return -1;
 }
 
-bool
+int
 bfy_buffer_search_range(bfy_buffer const* buf,
                         size_t ibegin, size_t iend,
                         void const* needle, size_t needle_len,
@@ -879,7 +1033,7 @@ bfy_buffer_search_range(bfy_buffer const* buf,
     return buffer_search_range(buf, begin, end, needle, needle_len, match);
 }
 
-bool
+int
 bfy_buffer_search(bfy_buffer const* buf,
                   void const* needle, size_t needle_len,
                   size_t* match) {
@@ -914,19 +1068,15 @@ bfy_buffer_init_unmanaged(void* data, size_t len) {
 }
 
 bfy_buffer*
-bfy_buffer_new_unmanaged(void* data, size_t len) {
-    bfy_buffer* buf = bfy_buffer_new();
-    *buf = bfy_buffer_init_unmanaged(data, len);
+bfy_buffer_new_unmanaged(void* space, size_t len) {
+    bfy_buffer* buf = malloc(sizeof(bfy_buffer));
+    *buf = bfy_buffer_init_unmanaged(space, len);
     return buf;
 }
 
 void
 bfy_buffer_destruct(bfy_buffer* buf) {
     buffer_drain_all(buf, DRAIN_FLAG_NORECYCLE);
-    free(buf->pages);
-    buf->pages = NULL;
-    buf->n_pages = 0;
-    buf->n_pages_alloc = 0;
 }
 
 void
