@@ -624,25 +624,31 @@ iov_drain(struct bfy_iovec io, size_t len) {
 
 static size_t
 buffer_copyout(bfy_buffer const* buf, void* content,
-               struct bfy_pos begin_pos, struct bfy_pos end_pos) {
+               struct bfy_pos begin, struct bfy_pos end) {
     char* tgt = content;
 
-    struct bfy_page const* const first_page = pages_cbegin(buf) + begin_pos.page_idx;
-    struct bfy_page const* const last_page = pages_cbegin(buf) + end_pos.page_idx;
+    struct bfy_page const* const first_page = pages_cbegin(buf) + begin.page_idx;
+    struct bfy_page const* const last_page = pages_cbegin(buf) + end.page_idx;
     for (struct bfy_page const* page = first_page; page <= last_page; ++page) {
+        if (page == last_page && end.page_pos == 0) {
+            // end-of-pages reached
+            break;
+        }
         struct bfy_iovec io = page_peek_content(page);
         if (page == last_page) {
-            io.iov_len = size_t_min(io.iov_len, end_pos.page_pos);
+            // maybe [begin..end) omits the back of the last page
+            io.iov_len = size_t_min(io.iov_len, end.page_pos);
         }
         if (page == first_page) {
-            io = iov_drain(io, begin_pos.page_pos);
+            // maybe [begin..end) omits the front of the first page
+            io = iov_drain(io, begin.page_pos);
         }
         memcpy(tgt, io.iov_base, io.iov_len);
         tgt += io.iov_len;
     }
 
     size_t const copied_len = tgt - (const char*)content;
-    assert(copied_len == (end_pos.content_pos - begin_pos.content_pos));
+    assert(copied_len == (end.content_pos - begin.content_pos));
     return copied_len;
 }
 
@@ -769,7 +775,7 @@ bfy_buffer_make_contiguous(bfy_buffer* buf, size_t wanted) {
 /// search
 
 static struct bfy_iovec
-buffer_get_content_at_pos(bfy_buffer const* buf, struct bfy_pos pos) {
+buffer_peek_content_at_pos(bfy_buffer const* buf, struct bfy_pos pos) {
     struct bfy_page const* const page = pages_cbegin(buf) + pos.page_idx;
     return iov_drain(page_peek_content(page), pos.page_pos);
 }
@@ -805,7 +811,7 @@ buffer_pos_next_page(bfy_buffer const* buf, struct bfy_pos const pos) {
 static bool
 buffer_contains_at(bfy_buffer const* buf, struct bfy_pos at,
                    void const* needle, size_t needle_len) {
-    struct bfy_iovec const io = buffer_get_content_at_pos(buf, at);
+    struct bfy_iovec const io = buffer_peek_content_at_pos(buf, at);
     if (io.iov_len == 0) {
         return false;
     }
@@ -845,7 +851,7 @@ buffer_search_range(bfy_buffer const* buf,
                     size_t* setme) {
     struct bfy_pos walk = begin;
     while (walk.content_pos + needle_len <= end.content_pos) {
-        struct bfy_iovec const io = buffer_get_content_at_pos(buf, walk);
+        struct bfy_iovec const io = buffer_peek_content_at_pos(buf, walk);
         size_t const hit = buffer_search_iovec(io, needle, needle_len);
         if (hit < io.iov_len) {
             // maybe got a match?
@@ -877,9 +883,7 @@ bool
 bfy_buffer_search(bfy_buffer const* buf,
                   void const* needle, size_t needle_len,
                   size_t* match) {
-    struct bfy_pos const begin = { 0 };
-    struct bfy_pos const end = buffer_get_pos(buf, SIZE_MAX);
-    return buffer_search_range(buf, begin, end, needle, needle_len, match);
+    return bfy_buffer_search_range(buf, 0, SIZE_MAX, needle, needle_len, match);
 }
 
 /// life cycle
