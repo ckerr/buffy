@@ -1,0 +1,37 @@
+name: ci-linux
+
+on: pull_request
+
+jobs:
+  ci:
+
+    runs-on: ubuntu-20.04
+    env:
+      CMAKE_GENERATOR: Ninja
+
+    steps:
+    - name: get-buffy
+      uses: actions/checkout@v2
+
+    - name: get-googletest
+      uses: srt32/git-actions@v0.0.3
+      with:
+        args: git submodule update --init --recursive
+
+    - name: get-build-deps
+      run: |
+        sudo apt-get install -y clang cmake ninja-build valgrind
+
+    - name: make-buffy
+      run: |
+        cmake -E remove_directory build
+        cmake -B build -S . -DCMAKE_BUILD_TYPE=Debug
+        cmake --build build
+
+    - name: ctest
+      working-directory: ./build
+      run: ctest
+
+    - name: ctest-valgrind
+      working-directory: ./build
+      run: ctest -D ExperimentalMemCheck
