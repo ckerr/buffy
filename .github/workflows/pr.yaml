@@ -1,10 +1,35 @@
-name: ci-linux
+name: continuous-integration
 
 on: pull_request
 
 jobs:
-  ctest:
+  ctest-mac:
+    runs-on: macos-latest
+    env:
+      BUILD_DIR: mac-build
 
+    steps:
+    - name: get-buffy
+      uses: actions/checkout@v2
+      with:
+        submodules: 'true'
+
+    - name: get-build-deps
+      run: |
+        env
+        brew install cmake llvm
+
+    - name: make-buffy
+      run: |
+        cmake -E remove_directory "${BUILD_DIR}"
+        cmake -B "${BUILD_DIR}" -S . -DCMAKE_BUILD_TYPE=Debug
+        cmake --build "${BUILD_DIR}"
+
+    - name: ctest
+      working-directory: ${{env.BUILD_DIR}}
+      run: ctest
+
+  ctest-linux:
     runs-on: ubuntu-20.04
     env:
       BUILD_DIR: build
@@ -12,11 +37,8 @@ jobs:
     steps:
     - name: get-buffy
       uses: actions/checkout@v2
-
-    - name: get-googletest
-      uses: srt32/git-actions@v0.0.3
       with:
-        args: git submodule update --init --recursive
+        submodules: 'true'
 
     - name: get-build-deps
       run: |
@@ -24,6 +46,7 @@ jobs:
 
     - name: make-buffy
       run: |
+        env
         cmake -E remove_directory "${BUILD_DIR}"
         cmake -B "${BUILD_DIR}" -S . -DCMAKE_BUILD_TYPE=Debug
         cmake --build "${BUILD_DIR}"
@@ -45,11 +68,8 @@ jobs:
     steps:
     - name: get-buffy
       uses: actions/checkout@v2
-
-    - name: get-googletest
-      uses: srt32/git-actions@v0.0.3
       with:
-        args: git submodule update --init --recursive
+        submodules: 'true'
 
     - name: get-build-deps
       run: |
@@ -57,6 +77,7 @@ jobs:
 
     - name: scan-build-cmake
       run: |
+        env
         cmake -E remove_directory "${BUILD_DIR}"
         scan-build cmake -B "${BUILD_DIR}" -S . -DCMAKE_BUILD_TYPE=Debug
 
