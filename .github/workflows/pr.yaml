@@ -3,11 +3,11 @@ name: ci-linux
 on: pull_request
 
 jobs:
-  ci:
+  ctest:
 
     runs-on: ubuntu-20.04
     env:
-      CMAKE_GENERATOR: Ninja
+      BUILD_DIR: build
 
     steps:
     - name: get-buffy
@@ -20,18 +20,48 @@ jobs:
 
     - name: get-build-deps
       run: |
-        sudo apt-get install -y clang cmake ninja-build valgrind
+        sudo apt-get install -y cmake valgrind
 
     - name: make-buffy
       run: |
-        cmake -E remove_directory build
-        cmake -B build -S . -DCMAKE_BUILD_TYPE=Debug
-        cmake --build build
+        cmake -E remove_directory "${BUILD_DIR}"
+        cmake -B "${BUILD_DIR}" -S . -DCMAKE_BUILD_TYPE=Debug
+        cmake --build "${BUILD_DIR}"
 
     - name: ctest
-      working-directory: ./build
+      working-directory: ${{env.BUILD_DIR}}
       run: ctest
 
     - name: ctest-valgrind
-      working-directory: ./build
+      working-directory: ${{env.BUILD_DIR}}
       run: ctest -D ExperimentalMemCheck
+
+  scan-build:
+
+    runs-on: ubuntu-20.04
+    env:
+      BUILD_DIR: scan-build
+
+    steps:
+    - name: get-buffy
+      uses: actions/checkout@v2
+
+    - name: get-googletest
+      uses: srt32/git-actions@v0.0.3
+      with:
+        args: git submodule update --init --recursive
+
+    - name: get-build-deps
+      run: |
+        sudo apt-get install -y cmake clang clang-tools
+
+    - name: scan-build-cmake
+      run: |
+        cmake -E remove_directory "${BUILD_DIR}"
+        scan-build cmake -B "${BUILD_DIR}" -S . -DCMAKE_BUILD_TYPE=Debug
+
+    - name: scan-build-make
+      working-directory: ${{env.BUILD_DIR}}
+      run: |
+        scan-build --status-bugs make
+
