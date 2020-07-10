@@ -360,11 +360,13 @@ buffer_insert_pages(bfy_buffer* buf, size_t pos,
     if (n_pages_alloc > buf->n_pages_alloc) {
         n_pages_alloc = pick_capacity(16, n_pages_alloc);
         void* pages = realloc(buf->pages, pagesize * n_pages_alloc);
-        if (pages == NULL) {
-            return -1;
+        if (pages != NULL) {
+            buf->pages = pages;
+            buf->n_pages_alloc = n_pages_alloc;
         }
-        buf->pages = pages;
-        buf->n_pages_alloc = n_pages_alloc;
+    }
+    if (buf->pages == NULL) {
+        return -1;
     }
 
     // if we had 1 page and are inserting more, handle the special case
