@@ -31,7 +31,7 @@
 #include <type_traits>
 
 #include "libbuffy/buffer.h"
-#include "../src/portable-endian.h"
+#include "../src/endianness.h"
 
 #include "gtest/gtest.h"
 
@@ -797,7 +797,7 @@ TEST(Buffer, copyout_all_but_first_and_last_char) {
 TEST(Buffer, endian_16) {
     BufferWithLocalArray<64> local;
     auto const in = uint16_t { 1 };
-    auto const expected = htobe16(in);
+    auto const expected = hton16(in);
     auto out = std::remove_cv_t<decltype(in)> {};
     EXPECT_EQ(0, bfy_buffer_add_hton_u16(&local.buf, in));
     EXPECT_TRUE(std::equal(std::data(local.array), std::data(local.array)+sizeof(expected), reinterpret_cast<char const*>(&expected)));
@@ -808,7 +808,7 @@ TEST(Buffer, endian_16) {
 TEST(Buffer, endian_32) {
     BufferWithLocalArray<64> local;
     auto const in = uint32_t { 1 };
-    auto const expected = htobe32(in);
+    auto const expected = hton32(in);
     auto out = std::remove_cv_t<decltype(in)> {};
     EXPECT_EQ(0, bfy_buffer_add_hton_u32(&local.buf, in));
     EXPECT_TRUE(std::equal(std::data(local.array), std::data(local.array)+sizeof(expected), reinterpret_cast<char const*>(&expected)));
@@ -819,7 +819,7 @@ TEST(Buffer, endian_32) {
 TEST(Buffer, endian_64) {
     BufferWithLocalArray<64> local;
     auto const in = uint64_t { 1 };
-    auto const expected = htobe64(in);
+    auto const expected = hton64(in);
     auto out = std::remove_cv_t<decltype(in)> {};
     EXPECT_EQ(0, bfy_buffer_add_hton_u64(&local.buf, in));
     EXPECT_TRUE(std::equal(std::data(local.array), std::data(local.array)+sizeof(expected), reinterpret_cast<char const*>(&expected)));

@@ -30,7 +30,7 @@
 #include <string.h>  // memcpy()
 #include <stdlib.h>  // malloc(), realloc(), free()
 
-#include "portable-endian.h"
+#include "endianness.h"
 
 static size_t
 size_t_min(size_t a, size_t b) {
@@ -598,19 +598,19 @@ bfy_buffer_add_hton_u8(struct bfy_buffer* buf, uint8_t addme) {
 
 int
 bfy_buffer_add_hton_u16(struct bfy_buffer* buf, uint16_t addme) {
-    uint16_t const be = htobe16(addme);
+    uint16_t const be = hton16(addme);
     return bfy_buffer_add(buf, &be, sizeof(be));
 }
 
 int
 bfy_buffer_add_hton_u32(struct bfy_buffer* buf, uint32_t addme) {
-    uint32_t const be = htobe32(addme);
+    uint32_t const be = hton32(addme);
     return bfy_buffer_add(buf, &be, sizeof(be));
 }
 
 int
 bfy_buffer_add_hton_u64(struct bfy_buffer* buf, uint64_t addme) {
-    uint64_t const be = htobe64(addme);
+    uint64_t const be = hton64(addme);
     return bfy_buffer_add(buf, &be, sizeof(be));
 }
 
@@ -851,7 +851,7 @@ bfy_buffer_remove_ntoh_u16(struct bfy_buffer* buf, uint16_t* setme) {
     uint16_t tmp;
     size_t const len = bfy_buffer_remove(buf, &tmp, sizeof(tmp));
     if (len == sizeof(tmp)) {
-        *setme = be16toh(tmp);
+        *setme = ntoh16(tmp);
         return 0;
     }
     return -1;
@@ -862,7 +862,7 @@ bfy_buffer_remove_ntoh_u32(struct bfy_buffer* buf, uint32_t* setme) {
     uint32_t tmp;
     size_t const len = bfy_buffer_remove(buf, &tmp, sizeof(tmp));
     if (len == sizeof(tmp)) {
-        *setme = be32toh(tmp);
+        *setme = ntoh32(tmp);
         return 0;
     }
     return -1;
@@ -873,7 +873,7 @@ bfy_buffer_remove_ntoh_u64(struct bfy_buffer* buf, uint64_t* setme) {
     uint64_t tmp;
     size_t const len = bfy_buffer_remove(buf, &tmp, sizeof(tmp));
     if (len == sizeof(tmp)) {
-        *setme = be64toh(tmp);
+        *setme = ntoh64(tmp);
         return 0;
     }
     return -1;
