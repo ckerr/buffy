@@ -14,6 +14,18 @@ Buffy is designed to be as efficient as possible despite being a
 general-purpose tool. It avoids unnecessary memory allocations and
 copies when possible.
 
+## Building libbuffy
+
+```sh
+$ git clone https://github.com/ckerr/buffy.git
+$ cd buffy
+$ git submodule update --init
+$ mkdir build
+$ cd build
+$ cmake ..
+$ make
+```
+
 ## Concepts: Pages, Content, and Space
 
 bfy buffers are implemented using an array of separate pages, where a
