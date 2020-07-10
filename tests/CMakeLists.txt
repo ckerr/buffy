@@ -7,7 +7,7 @@ macro(package_add_test TESTNAME)
     add_executable(${TESTNAME} ${ARGN})
     # link the Google test infrastructure, mocking library, and a default main fuction to
     # the test executable.  Remove g_test_main if writing your own main function.
-    target_link_libraries(${TESTNAME} ${BFY_TEST_COMMON_LIBRARIES})
+    target_link_libraries(${TESTNAME} gtest gtest_main)
     target_link_libraries(${TESTNAME} ${CMAKE_PROJECT_NAME})
     # gtest_discover_tests replaces gtest_add_tests,
     # see https://cmake.org/cmake/help/v3.10/module/GoogleTest.html for more options to pass to it
@@ -16,7 +16,10 @@ macro(package_add_test TESTNAME)
         WORKING_DIRECTORY ${PROJECT_DIR}
         PROPERTIES VS_DEBUGGER_WORKING_DIRECTORY "${PROJECT_DIR}"
     )
-    set_target_properties(${TESTNAME} PROPERTIES FOLDER tests)
+    set_target_properties(${TESTNAME} PROPERTIES
+        FOLDER tests
+        MSVC_RUNTIME_LIBRARY "MultiThreadedDLL"
+    )
 endmacro()
 
 package_add_test(buffer-test
