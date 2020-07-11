@@ -1053,7 +1053,9 @@ bfy_buffer_init(void) {
 bfy_buffer*
 bfy_buffer_new(void) {
     bfy_buffer* buf = malloc(sizeof(bfy_buffer));
-    *buf = bfy_buffer_init();
+    if (buf != NULL) {
+        *buf = bfy_buffer_init();
+    }
     return buf;
 }
 
@@ -1072,7 +1074,9 @@ bfy_buffer_init_unmanaged(void* data, size_t len) {
 bfy_buffer*
 bfy_buffer_new_unmanaged(void* space, size_t len) {
     bfy_buffer* buf = malloc(sizeof(bfy_buffer));
-    *buf = bfy_buffer_init_unmanaged(space, len);
+    if (buf != NULL) {
+        *buf = bfy_buffer_init_unmanaged(space, len);
+    }
     return buf;
 }
 
