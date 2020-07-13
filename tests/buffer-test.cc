@@ -1515,8 +1515,8 @@ TEST(Buffer, change_event_remove_string) {
     BufferWithReadonlyStrings local;
     auto const expected = bfy_changed_cb_info {
         .orig_size = bfy_buffer_get_content_len(&local.buf),
-        .n_added = 0,
-        .n_deleted = bfy_buffer_get_content_len(&local.buf)
+        .n_added = 1,
+        .n_deleted = 1 + bfy_buffer_get_content_len(&local.buf)
     };
 
     local.start_listening_to_changes();

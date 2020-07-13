@@ -484,6 +484,17 @@ bfy_buffer_commit_space(struct bfy_buffer* buf, size_t len) {
     return n_committed == len ? 0 : -1;
 }
 
+// move all the content to the beginning of the page
+static void
+page_make_space_contiguous(struct bfy_page* page) {
+    if (page->read_pos != 0) {
+        size_t const content_len = page_get_content_len(page);
+        memmove(page->data, page_read_cbegin(page), content_len);
+        page->read_pos = 0;
+        page->write_pos = content_len;
+    }
+}
+
 int
 bfy_buffer_ensure_space(bfy_buffer* buf, size_t len) {
     struct bfy_page* page = pages_back(buf);
@@ -495,12 +506,8 @@ bfy_buffer_ensure_space(bfy_buffer* buf, size_t len) {
             return 0;
         }
         if (len <= space_len + page->read_pos) {
-            // page has enough space but it's not contiguous,
-            // so make it contiguous by moving content to the
-            // front of the page
-            memmove(page->data, page->data + page->read_pos, page_get_content_len(page));
-            page->write_pos -= page->read_pos;
-            page->read_pos = 0;
+            // page has enough space but it's not contiguous
+            page_make_space_contiguous(page);
             return 0;
         }
     }
@@ -815,6 +822,11 @@ bfy_buffer_remove(bfy_buffer* buf, void* data, size_t wanted) {
     return buffer_remove(buf, data, buffer_get_pos(buf, wanted));
 }
 
+static void*
+buffer_read_begin(bfy_buffer* buf) {
+    return page_read_begin(pages_begin(buf));
+}
+
 char const*
 bfy_buffer_peek_string(bfy_buffer* buf, size_t* setme_len) {
     // ensure the string we return is zero-terminated,
@@ -832,22 +844,43 @@ bfy_buffer_peek_string(bfy_buffer* buf, size_t* setme_len) {
         *setme_len = page_get_content_len(page);
     }
 
-    return page_read_cbegin(page);
+    return buffer_read_begin(buf);
 }
 
 char*
 bfy_buffer_remove_string(bfy_buffer* buf, size_t* setme_len) {
-    struct bfy_pos const pos = buffer_get_pos(buf, SIZE_MAX);
-    size_t moved_len = 0;
-    char* ret = allocator.malloc(pos.content_pos + 1);  // +1 for '\0'
-    if (ret != NULL) {
-        moved_len = buffer_remove(buf, ret, pos);
-        assert(moved_len == pos.content_pos);
-        ret[moved_len] = '\0';
-    }
     if (setme_len != NULL) {
-        *setme_len = moved_len;
+        *setme_len = bfy_buffer_get_content_len(buf);
     }
+
+    bfy_buffer_begin_coalescing_change_events(buf);
+    bfy_buffer_add_ch(buf, '\0');
+    char* ret = NULL;
+
+    // Plan A: if the whole buffer is in one contiguous malloc'ed
+    // block, transfer ownership of that block to the caller
+    bfy_buffer_make_all_contiguous(buf);
+    if (buffer_count_pages(buf) == 1) {
+        struct bfy_page* const page = pages_begin(buf);
+        if (page_can_realloc(page)) {
+            page_make_space_contiguous(page);
+            ret = page_read_begin(page);
+            buffer_drain_all(buf, DRAIN_FLAG_NORELEASE | DRAIN_FLAG_NORECYCLE);
+        }
+    }
+
+    if (ret == NULL) {
+        // Plan B: build a new string
+        struct bfy_pos const pos = buffer_get_pos(buf, SIZE_MAX);
+        size_t moved_len = 0;
+        ret = allocator.malloc(pos.content_pos);
+        if (ret != NULL) {
+            moved_len = buffer_remove(buf, ret, pos);
+            assert(moved_len == pos.content_pos);
+        }
+    }
+
+    bfy_buffer_end_coalescing_change_events(buf);
     return ret;
 }
 
@@ -914,24 +947,31 @@ bfy_buffer_make_contiguous(bfy_buffer* buf, size_t wanted) {
 
     // if the first page already holds wanted, then we're done
     if ((pos.page_idx == 0) || (pos.page_idx == 1 && pos.page_pos == 0)) {
-        return page_read_begin(pages_begin(buf));
+        return buffer_read_begin(buf);
     }
 
     bfy_buffer_mute_change_events(buf);
 
-    // build a contiguous page
-    int8_t* data = allocator.malloc(pos.content_pos);
-    size_t const n_moved = buffer_remove(buf, data, pos);
+    // if we have enough space, use it
+    struct bfy_iovec space = bfy_buffer_peek_space(buf);
+    if (space.iov_len >= pos.content_pos) {
+        size_t const n_copied = bfy_buffer_copyout(buf, 0, space.iov_base, pos.content_pos);
+        bfy_buffer_commit_space(buf, n_copied);
+        bfy_buffer_drain(buf, n_copied);
+    } else {
+        // make some new free space, use it, and prepend it
+        int8_t* data = allocator.malloc(pos.content_pos);
+        size_t const n_moved = buffer_remove(buf, data, pos);
+        struct bfy_page const newpage = {
+            .data = data,
+            .size = n_moved,
+            .write_pos = n_moved
+        };
+        buffer_prepend_pages(buf, &newpage, 1);
+    }
 
-    // now prepend a new page with the contiguous memory
-    struct bfy_page const newpage = {
-        .data = data,
-        .size = n_moved,
-        .write_pos = n_moved
-    };
-    buffer_prepend_pages(buf, &newpage, 1);
     bfy_buffer_unmute_change_events(buf);
-    return page_read_begin(pages_begin(buf));
+    return buffer_read_begin(buf);
 }
 
 void*
