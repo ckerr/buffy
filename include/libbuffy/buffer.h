@@ -567,6 +567,27 @@ void bfy_buffer_end_coalescing_change_events(bfy_buffer* buf);
 
 /* MEMORY MANAGEMENT */
 
+struct bfy_allocator {
+  void* (*malloc)(size_t size);
+  void (*free)(void *ptr);
+  void* (*calloc)(size_t nmemb, size_t size);
+  void* (*realloc)(void *ptr, size_t size);
+};
+
+/**
+ * Sets the allocator singleton used to manage all buffer memory.
+ *
+ * malloc(), free(), calloc(), and realloc() are the defaults.
+ *
+ * If you're going to use this, do it **first** before creating
+ * buffers. Otherwise you could wind up with memory allocated with
+ * the the system malloc() but freed with your allocator's custom
+ * free() function.
+ *
+ * @param allocator a struct with memory management function pointers
+ */
+void bfy_set_allocator(struct bfy_allocator*);
+
 /**
  * Makes the content at the beginning of a buffer contiguous.
  *

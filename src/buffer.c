@@ -32,6 +32,17 @@
 
 #include "endianness.h"
 
+static struct bfy_allocator allocator = {
+    .malloc = malloc,
+    .free = free,
+    .calloc = calloc,
+    .realloc = realloc
+};
+
+void bfy_set_allocator(struct bfy_allocator* alloc) {
+    allocator = *alloc;
+}
+
 static size_t
 size_t_min(size_t a, size_t b) {
     return a < b ? a : b;
@@ -195,7 +206,7 @@ page_realloc(struct bfy_page* page, size_t requested) {
     // maybe free the memory
     if (requested == 0) {
         if (page->data != NULL) {
-            free(page->data);
+            allocator.free(page->data);
             page->data = NULL;
         }
         return 0;
@@ -208,7 +219,7 @@ page_realloc(struct bfy_page* page, size_t requested) {
         return 0;
     }
 
-    void* new_data = realloc(page->data, new_size);
+    void* new_data = allocator.realloc(page->data, new_size);
     if (new_data != NULL) {
         page->data = new_data;
         page->size = new_size;
@@ -359,7 +370,7 @@ buffer_insert_pages(bfy_buffer* buf, size_t pos,
     size_t const pagesize = sizeof(struct bfy_page);
     if (n_pages_alloc > buf->n_pages_alloc) {
         n_pages_alloc = pick_capacity(16, n_pages_alloc);
-        void* pages = realloc(buf->pages, pagesize * n_pages_alloc);
+        void* pages = allocator.realloc(buf->pages, pagesize * n_pages_alloc);
         if (pages != NULL) {
             buf->pages = pages;
             buf->n_pages_alloc = n_pages_alloc;
@@ -663,7 +674,7 @@ buffer_drain_all(bfy_buffer* buf, int flags) {
         }
     }
 
-    free(buf->pages);
+    allocator.free(buf->pages);
     buf->pages = NULL;
     buf->n_pages = 0;
     buf->n_pages_alloc = 0;
@@ -694,7 +705,7 @@ buffer_forget_first_n_pages(bfy_buffer* buf, size_t len) {
             memmove(begin, begin + len, pagesize * (end - begin - len));
             buf->n_pages -= len;
         } else {
-            free(buf->pages);
+            allocator.free(buf->pages);
             buf->pages = NULL;
             buf->n_pages = 0;
             buf->n_pages_alloc = 0;
@@ -828,7 +839,7 @@ char*
 bfy_buffer_remove_string(bfy_buffer* buf, size_t* setme_len) {
     struct bfy_pos const pos = buffer_get_pos(buf, SIZE_MAX);
     size_t moved_len = 0;
-    char* ret = malloc(pos.content_pos + 1);  // +1 for '\0'
+    char* ret = allocator.malloc(pos.content_pos + 1);  // +1 for '\0'
     if (ret != NULL) {
         moved_len = buffer_remove(buf, ret, pos);
         assert(moved_len == pos.content_pos);
@@ -909,7 +920,7 @@ bfy_buffer_make_contiguous(bfy_buffer* buf, size_t wanted) {
     bfy_buffer_mute_change_events(buf);
 
     // build a contiguous page
-    int8_t* data = malloc(pos.content_pos);
+    int8_t* data = allocator.malloc(pos.content_pos);
     size_t const n_moved = buffer_remove(buf, data, pos);
 
     // now prepend a new page with the contiguous memory
@@ -1054,7 +1065,7 @@ bfy_buffer_init(void) {
 
 bfy_buffer*
 bfy_buffer_new(void) {
-    bfy_buffer* buf = malloc(sizeof(bfy_buffer));
+    bfy_buffer* buf = allocator.malloc(sizeof(bfy_buffer));
     if (buf != NULL) {
         *buf = bfy_buffer_init();
     }
@@ -1075,7 +1086,7 @@ bfy_buffer_init_unmanaged(void* data, size_t len) {
 
 bfy_buffer*
 bfy_buffer_new_unmanaged(void* space, size_t len) {
-    bfy_buffer* buf = malloc(sizeof(bfy_buffer));
+    bfy_buffer* buf = allocator.malloc(sizeof(bfy_buffer));
     if (buf != NULL) {
         *buf = bfy_buffer_init_unmanaged(space, len);
     }
@@ -1090,5 +1101,5 @@ bfy_buffer_destruct(bfy_buffer* buf) {
 void
 bfy_buffer_free(bfy_buffer* buf) {
     bfy_buffer_destruct(buf);
-    free(buf);
+    allocator.free(buf);
 }
