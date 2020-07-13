@@ -126,7 +126,7 @@ class BufferWithReadonlyStrings {
     }
 
     void start_listening_to_changes() {
-        auto const changed_cb = [](auto* buf, auto const* info, void* data) {
+        auto const changed_cb = [](auto* /*buf*/, auto const* info, void* data) {
             reinterpret_cast<changes_t*>(data)->push_back(*info);
         };
         bfy_buffer_set_changed_cb(&buf, changed_cb, &changes);
@@ -172,7 +172,7 @@ TEST(Buffer, init_unmanaged) {
     auto constexpr n_expected_vecs = 1;
     auto vecs = std::array<bfy_iovec, n_expected_vecs>{};
     EXPECT_EQ(n_expected_vecs, bfy_buffer_peek_all(&buf, std::data(vecs), std::size(vecs)));
-    auto const expected_vecs = std::array<bfy_iovec, n_expected_vecs>{ { std::data(array), std::size(str) } };
+    auto const expected_vecs = std::array<bfy_iovec, n_expected_vecs>{ {{ std::data(array), std::size(str) }} };
     EXPECT_EQ(expected_vecs, vecs);
     EXPECT_EQ(std::size(array) - std::size(str), bfy_buffer_get_space_len(&buf));
 
@@ -184,7 +184,6 @@ TEST(Buffer, add_readonly) {
 
     // add a read-only string.
     // it should show up as readable in the buffer.
-    auto constexpr str1 = std::string_view{"Hello, "};
     EXPECT_EQ(0, bfy_buffer_add_readonly(&buf, std::data(str1), std::size(str1)));
     auto expected_readable_size = std::size(str1);
     EXPECT_EQ(expected_readable_size, bfy_buffer_get_content_len(&buf));
@@ -192,7 +191,6 @@ TEST(Buffer, add_readonly) {
 
     // add another, to test that buffer knows the end page is readonly
     // and will allocate another page.
-    auto constexpr str2 = std::string_view{"World!"};
     EXPECT_EQ(0, bfy_buffer_add_readonly(&buf, std::data(str2), std::size(str2)));
     expected_readable_size += std::size(str2);
     EXPECT_EQ(expected_readable_size, bfy_buffer_get_content_len(&buf));
@@ -320,7 +318,6 @@ TEST(Buffer, add_printf_when_not_enough_space) {
 TEST(Buffer, make_contiguous_when_only_one_page) {
     BufferWithLocalArray<64> local;
 
-    auto constexpr str1 = std::string_view { "General" };
     bfy_buffer_add(&local.buf, std::data(str1), std::size(str1));
 
     // confirm adding str1 fit inside the existing page
@@ -386,7 +383,7 @@ TEST(Buffer, make_contiguous_when_small_request) {
     // confirm that nothing happens when you request a page
     // that is already contiguous
     auto constexpr n_contiguous = std::size(strs.front());
-    for (int i=0; i < n_contiguous; ++i) {
+    for (size_t i=0; i < n_contiguous; ++i) {
         auto const* rv = bfy_buffer_make_contiguous(&buf, n_contiguous);
         EXPECT_EQ(rv, std::data(strs.front()));
         EXPECT_EQ(n_pages_in, buffer_count_pages(&buf));
@@ -414,7 +411,7 @@ TEST(Buffer, make_contiguous_when_readonly_pages) {
     auto const* rv = bfy_buffer_make_all_contiguous(&buf);
     EXPECT_EQ(1, buffer_count_pages(&buf));
     EXPECT_EQ(n_expected_readable, bfy_buffer_get_content_len(&buf));
-    std::for_each(begin, end, [this, rv](auto const& str){ EXPECT_NE(std::data(str), rv); });
+    std::for_each(begin, end, [rv](auto const& str){ EXPECT_NE(std::data(str), rv); });
 
     bfy_buffer_destruct(&buf);
 }
@@ -785,7 +782,7 @@ TEST(Buffer, copyout_first_part_of_last_page) {
 
 TEST(Buffer, copyout_all_but_first_and_last_char) {
     auto local = BufferWithReadonlyStrings {};
-    auto array = std::array<char, 64>{};
+    auto array = std::array<char, 128>{};
     auto const n_wanted = std::size(local.allstrs) - 2;
     auto const len = bfy_buffer_copyout(&local.buf, 1, std::data(array), n_wanted);
     EXPECT_EQ(len, n_wanted);
@@ -1186,17 +1183,17 @@ TEST(Buffer, search_almost_match_at_end) {
 }
 
 TEST(Buffer, search_almost_match_at_page_break) {
-    auto constexpr str1 = std::string_view { "The Beat" };
-    auto constexpr str2 = std::string_view { " were not the same band as T" };
-    auto constexpr str3 = std::string_view { "he Beatles" };
+    auto constexpr a = std::string_view { "The Beat" };
+    auto constexpr b = std::string_view { " were not the same band as T" };
+    auto constexpr c = std::string_view { "he Beatles" };
 
     auto buf = bfy_buffer_init();
-    bfy_buffer_add_readonly(&buf, std::data(str1), std::size(str1));
-    bfy_buffer_add_readonly(&buf, std::data(str2), std::size(str2));
-    bfy_buffer_add_readonly(&buf, std::data(str3), std::size(str3));
+    bfy_buffer_add_readonly(&buf, std::data(a), std::size(a));
+    bfy_buffer_add_readonly(&buf, std::data(b), std::size(b));
+    bfy_buffer_add_readonly(&buf, std::data(c), std::size(c));
 
     auto constexpr needle = std::string_view { "The Beatles" };
-    auto constexpr expected_pos = std::size(str1) + std::size(str2) - 1;
+    auto constexpr expected_pos = std::size(a) + std::size(b) - 1;
     auto pos = size_t {};
 
     EXPECT_EQ(0, bfy_buffer_search(&buf, std::data(needle), std::size(needle), &pos));
@@ -1206,16 +1203,15 @@ TEST(Buffer, search_almost_match_at_page_break) {
 }
 
 TEST(Buffer, false_match_before_real_match_across_page_break) {
-    auto constexpr str1 = std::string_view { "Hungry Hungry " };
-    auto constexpr str2 = std::string_view { "Hungry Hippos" };
+    auto constexpr one = std::string_view { "Hungry Hungry " };
+    auto constexpr two = std::string_view { "Hungry Hippos" };
 
     auto buf = bfy_buffer_init();
-    bfy_buffer_add_readonly(&buf, std::data(str1), std::size(str1));
-    bfy_buffer_add_readonly(&buf, std::data(str2), std::size(str2));
-    bfy_buffer_add_readonly(&buf, std::data(str3), std::size(str3));
+    bfy_buffer_add_readonly(&buf, std::data(one), std::size(one));
+    bfy_buffer_add_readonly(&buf, std::data(two), std::size(two));
 
     auto constexpr needle = std::string_view { "Hungry Hungry Hippos" };
-    auto constexpr expected_pos = std::size(str1) + std::size(str2) - std::size(needle);
+    auto constexpr expected_pos = std::size(one) + std::size(two) - std::size(needle);
     auto pos = size_t {};
 
     EXPECT_EQ(0, bfy_buffer_search(&buf, std::data(needle), std::size(needle), &pos));
@@ -1260,7 +1256,8 @@ TEST(Buffer, change_event_add) {
     auto constexpr size = std::size(str);
     auto const expected = bfy_changed_cb_info {
         .orig_size = bfy_buffer_get_content_len(&local.buf),
-        .n_added = size
+        .n_added = size,
+        .n_deleted = 0
     };
 
     local.start_listening_to_changes();
@@ -1274,7 +1271,8 @@ TEST(Buffer, change_event_add_buffer) {
     BufferWithReadonlyStrings donor;
     auto const expected = bfy_changed_cb_info {
         .orig_size = bfy_buffer_get_content_len(&local.buf),
-        .n_added = bfy_buffer_get_content_len(&donor.buf)
+        .n_added = bfy_buffer_get_content_len(&donor.buf),
+        .n_deleted = 0
     };
 
     local.start_listening_to_changes();
@@ -1286,7 +1284,8 @@ TEST(Buffer, change_event_add_ch) {
     BufferWithReadonlyStrings local;
     auto const expected = bfy_changed_cb_info {
         .orig_size = bfy_buffer_get_content_len(&local.buf),
-        .n_added = 1
+        .n_added = 1,
+        .n_deleted = 0
     };
 
     local.start_listening_to_changes();
@@ -1300,7 +1299,8 @@ TEST(Buffer, change_event_add_hton_u8) {
     auto constexpr size = sizeof(addme);
     auto const expected = bfy_changed_cb_info {
         .orig_size = bfy_buffer_get_content_len(&local.buf),
-        .n_added = size
+        .n_added = size,
+        .n_deleted = 0
     };
 
     local.start_listening_to_changes();
@@ -1314,7 +1314,8 @@ TEST(Buffer, change_event_add_hton_u16) {
     auto constexpr size = sizeof(addme);
     auto const expected = bfy_changed_cb_info {
         .orig_size = bfy_buffer_get_content_len(&local.buf),
-        .n_added = size
+        .n_added = size,
+        .n_deleted = 0
     };
 
     local.start_listening_to_changes();
@@ -1328,7 +1329,8 @@ TEST(Buffer, change_event_add_hton_u32) {
     auto constexpr size = sizeof(addme);
     auto const expected = bfy_changed_cb_info {
         .orig_size = bfy_buffer_get_content_len(&local.buf),
-        .n_added = size
+        .n_added = size,
+        .n_deleted = 0
     };
 
     local.start_listening_to_changes();
@@ -1342,7 +1344,8 @@ TEST(Buffer, change_event_add_hton_u64) {
     auto constexpr size = sizeof(addme);
     auto const expected = bfy_changed_cb_info {
         .orig_size = bfy_buffer_get_content_len(&local.buf),
-        .n_added = size
+        .n_added = size,
+        .n_deleted = 0
     };
 
     local.start_listening_to_changes();
@@ -1364,7 +1367,8 @@ TEST(Buffer, change_event_add_printf) {
     auto constexpr size  = std::size(str);
     auto const expected = bfy_changed_cb_info {
         .orig_size = bfy_buffer_get_content_len(&local.buf),
-        .n_added = size
+        .n_added = size,
+        .n_deleted = 0
     };
 
     local.start_listening_to_changes();
@@ -1378,7 +1382,8 @@ TEST(Buffer, change_event_add_readonly) {
     auto constexpr size = std::size(str);
     auto const expected = bfy_changed_cb_info {
         .orig_size = bfy_buffer_get_content_len(&local.buf),
-        .n_added = size
+        .n_added = size,
+        .n_deleted = 0
     };
 
     local.start_listening_to_changes();
@@ -1401,6 +1406,7 @@ TEST(Buffer, change_event_drain_all) {
     auto const size = bfy_buffer_get_content_len(&local.buf);
     auto const expected = bfy_changed_cb_info {
         .orig_size = size,
+        .n_added = 0,
         .n_deleted = size
     };
 
@@ -1419,6 +1425,7 @@ TEST(Buffer, change_event_remove) {
         BufferWithReadonlyStrings mabel;
         auto const expected = bfy_changed_cb_info {
             .orig_size = n,
+            .n_added = 0,
             .n_deleted = i
         };
 
@@ -1437,6 +1444,7 @@ TEST(Buffer, change_event_remove_buffer) {
         BufferWithReadonlyStrings mabel;
         auto const expected = bfy_changed_cb_info {
             .orig_size = n,
+            .n_added = 0,
             .n_deleted = i
         };
 
@@ -1452,6 +1460,7 @@ TEST(Buffer, change_event_remove_ntoh_u8) {
     auto setme = uint8_t {};
     auto const expected = bfy_changed_cb_info {
         .orig_size = bfy_buffer_get_content_len(&local.buf),
+        .n_added = 0,
         .n_deleted = sizeof(setme)
     };
 
@@ -1465,6 +1474,7 @@ TEST(Buffer, change_event_remove_ntoh_u16) {
     auto setme = uint16_t {};
     auto const expected = bfy_changed_cb_info {
         .orig_size = bfy_buffer_get_content_len(&local.buf),
+        .n_added = 0,
         .n_deleted = sizeof(setme)
     };
 
@@ -1478,6 +1488,7 @@ TEST(Buffer, change_event_remove_ntoh_u32) {
     auto setme = uint32_t {};
     auto const expected = bfy_changed_cb_info {
         .orig_size = bfy_buffer_get_content_len(&local.buf),
+        .n_added = 0,
         .n_deleted = sizeof(setme)
     };
 
@@ -1491,6 +1502,7 @@ TEST(Buffer, change_event_remove_ntoh_u64) {
     auto setme = uint64_t {};
     auto const expected = bfy_changed_cb_info {
         .orig_size = bfy_buffer_get_content_len(&local.buf),
+        .n_added = 0,
         .n_deleted = sizeof(setme)
     };
 
@@ -1503,6 +1515,7 @@ TEST(Buffer, change_event_remove_string) {
     BufferWithReadonlyStrings local;
     auto const expected = bfy_changed_cb_info {
         .orig_size = bfy_buffer_get_content_len(&local.buf),
+        .n_added = 0,
         .n_deleted = bfy_buffer_get_content_len(&local.buf)
     };
 
@@ -1525,7 +1538,8 @@ TEST(Buffer, change_event_coalesce) {
     auto constexpr n = 1024;
     auto const expected = bfy_changed_cb_info {
         .orig_size = bfy_buffer_get_content_len(&local.buf),
-        .n_added = std::size(str) * n
+        .n_added = std::size(str) * n,
+        .n_deleted = 0
     };
 
     local.start_listening_to_changes();

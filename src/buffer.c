@@ -1046,7 +1046,9 @@ bfy_buffer_search(bfy_buffer const* buf,
 
 bfy_buffer
 bfy_buffer_init(void) {
-    bfy_buffer const buf = { 0 };
+    bfy_buffer const buf = {
+       .page = { 0 }
+    };
     return buf;
 }
 

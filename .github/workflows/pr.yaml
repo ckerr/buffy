@@ -3,80 +3,50 @@ name: continuous-integration
 on: pull_request
 
 jobs:
-  ctest-win:
+  ctest:
     env:
-      BUILD_DIR: build
-      BUILD_TYPE: Release
-    runs-on: windows-latest
+      BUILD_TYPE: Debug
+      SOURCE_DIR: '${{github.workspace}}'
+      BUILD_DIR: '${{github.workspace}}/build'
+    strategy:
+      matrix:
+        os: ['macos-latest', 'ubuntu-20.04', 'windows-latest']
+    runs-on: ${{ matrix.os }}
     steps:
-    - name: Get the Code 
-      uses: actions/checkout@v2
-      with:
-        submodules: 'true'
-    - name: Create Build Environment
-      # Some projects don't allow in-source building, so create a separate build directory
-      # We'll use this as our working directory for all subsequent commands
-      run: cmake -E make_directory ${{runner.workspace}}/build
-    - name: Configure CMake
-      shell: bash
-      working-directory: ${{runner.workspace}}/build
-      # Note the current convention is to use the -S and -B options here to specify source
-      # and build directories, but this is only available with CMake 3.13 and higher.
-      # The CMake binaries on the Github Actions machines are (as of this writing) 3.12
-      run: |
-        cmake --version
-        cmake "${GITHUB_WORKSPACE}" -DCMAKE_BUILD_TYPE="${BUILD_TYPE}" ..
-    - name: Make
-      shell: bash
-      working-directory: ${{runner.workspace}}/build
-      run: |
-        cmake --build . --config "${BUILD_TYPE}"
-    - name: Test
-      shell: bash
-      working-directory: ${{runner.workspace}}/build
-      run: |
-        ctest -C "${BUILD_TYPE}"
-
-  ctest-mac:
-    runs-on: macos-latest
-    env:
-      BUILD_DIR: mac-build
-    steps:
-    - name: get-buffy
-      uses: actions/checkout@v2
-      with:
-        submodules: 'true'
-    - name: make-buffy
-      run: |
-        cmake -B "${BUILD_DIR}" -S . -DCMAKE_BUILD_TYPE=Debug
-        cmake --build "${BUILD_DIR}" --config Debug
-    - name: ctest
-      working-directory: ${{env.BUILD_DIR}}
-      run: ctest
-
-  ctest-linux:
-    runs-on: ubuntu-20.04
-    env:
-      BUILD_DIR: build
-    steps:
-    - name: get-buffy
-      uses: actions/checkout@v2
-      with:
-        submodules: 'true'
-    - name: get-build-deps
-      run: |
-        sudo apt-get install -y valgrind
-    - name: make-buffy
+    - name: Dump Env
       run: |
         env
-        cmake -B "${BUILD_DIR}" -S . -DCMAKE_BUILD_TYPE=Debug
-        cmake --build "${BUILD_DIR}"
-    - name: ctest
+    - name: Get Dev Dependencies (macOS)
+      if: matrix.os == 'macos-latest'
+      run: |
+        brew tap LouisBrunner/valgrind
+        brew install --HEAD LouisBrunner/valgrind/valgrind
+    - name: Get Dev Dependencies (Ubuntu)
+      if: matrix.os == 'ubuntu-20.04'
+      run: sudo apt-get install -y valgrind
+    - name: Get Source
+      uses: actions/checkout@v2
+      with:
+        submodules: 'true'
+    - name: Make Makefiles
+      shell: bash
+      run: |
+        cmake --version
+        cmake -E make_directory "${BUILD_DIR}"
+        cmake -S "${SOURCE_DIR}" -B "${BUILD_DIR}" -DCMAKE_BUILD_TYPE="${BUILD_TYPE}" -DCMAKE_VERBOSE_MAKEFILE:BOOL='ON'
+    - name: Make Buffy
+      shell: bash
+      run: |
+        cmake --build "${BUILD_DIR}" --config "${BUILD_TYPE}"
+    - name: CTest (Windows)
+      if: matrix.os == 'windows-latest'
       working-directory: ${{env.BUILD_DIR}}
-      run: ctest
-    - name: ctest-valgrind
+      run: ctest --output-on-failure
+    - name: CTest with Valgrind (macOS, Ubuntu)
       working-directory: ${{env.BUILD_DIR}}
-      run: ctest -D ExperimentalMemCheck
+      if: matrix.os == 'macos-latest' || matrix.os == 'ubuntu-20.04'
+      shell: bash
+      run: "${SOURCE_DIR}/tests/ctest-valgrind-runner.sh"
 
   scan-build-linux:
     runs-on: ubuntu-20.04
