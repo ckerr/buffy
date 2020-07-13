@@ -21,7 +21,7 @@
  * SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
  */
 
-#include <libbuffy/buffer.h>
+#include <buffy/buffer.h>
 
 #include <assert.h>
 #include <errno.h>

@@ -26,6 +26,7 @@ include_directories(include)
 add_subdirectory(src)
 
 # tests
+option(INSTALL_GTEST OFF)
 option(BFY_RUN_TESTS "If ON, Buffy tests will be run." ON)
 if(${BFY_RUN_TESTS})
   # enable CTest.  This will set BUILD_TESTING to ON
@@ -34,3 +35,6 @@ if(${BFY_RUN_TESTS})
   enable_testing()
   add_subdirectory(tests)
 endif()
+
+install(TARGETS ${PROJECT_NAME} DESTINATION lib)
+install(DIRECTORY include/buffy DESTINATION include)

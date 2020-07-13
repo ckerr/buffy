@@ -51,7 +51,7 @@ typedef void (bfy_changed_cb)(struct bfy_buffer*,
 
 typedef void (bfy_unref_cb)(void* data, size_t len, void* user_data);
 
-#include <libbuffy/buffer-impl.h>
+#include <buffy/buffer-impl.h>
 
 struct bfy_iovec {
     void* iov_base;

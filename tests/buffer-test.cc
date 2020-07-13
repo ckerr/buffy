@@ -30,7 +30,7 @@
 #include <string_view>
 #include <type_traits>
 
-#include "libbuffy/buffer.h"
+#include "buffy/buffer.h"
 #include "../src/endianness.h"
 
 #include "gtest/gtest.h"
