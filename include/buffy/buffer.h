@@ -306,7 +306,8 @@ size_t bfy_buffer_get_content_len(bfy_buffer const* buf);
  * vecs to hold all of it.
  *
  * @param buf the buffer to inspect.
- * @param len the number of bytes of content to try to peek.
+ * @param begin offset into the buffer's contents to begin peeking from
+ * @param end offset into the buffer's contents to not peek
  * @param out an array of `n_out` bfy_iovecs.
  * @param n_vec the number of items in the `out` array. If `n_vec`
  *   is 0, we only count how many iovecs would be needed to point
@@ -314,8 +315,11 @@ size_t bfy_buffer_get_content_len(bfy_buffer const* buf);
  * @return The number of iovecs needed. This may be less or more than
  *   `n_vec` if fewer or more iovecs were needed for the requested data.
  */
-size_t bfy_buffer_peek(bfy_buffer const* buf, size_t len,
-                       struct bfy_iovec* vec_out, size_t vec_len);
+size_t bfy_buffer_peek(bfy_buffer const* buf,
+                       size_t begin,
+                       size_t end,
+                       struct bfy_iovec* vec_out,
+                       size_t vec_len);
 
 /**
  * Peeks at all the content inside a buffer.

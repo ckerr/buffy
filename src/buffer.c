@@ -315,27 +315,40 @@ page_peek_content(struct bfy_page const* const page) {
     return io;
 }
 
+static struct bfy_iovec
+iov_drain(struct bfy_iovec io, size_t len) {
+    len = size_t_min(len, io.iov_len);
+    io.iov_base = (char*)io.iov_base + len;
+    io.iov_len -= len;
+    return io;
+}
+
 size_t
-bfy_buffer_peek(bfy_buffer const* buf, size_t wanted,
+bfy_buffer_peek(bfy_buffer const* buf,
+                size_t begin_at, size_t end_at,
                 struct bfy_iovec* vec, size_t n_vec) {
     size_t needed = 0;
-    struct bfy_pos const pos = buffer_get_pos(buf, wanted);
-
     struct bfy_iovec const* const vec_end = vec + n_vec;
-    struct bfy_page const* it = pages_cbegin(buf);
-    struct bfy_page const* const end = it + pos.page_idx;
-    for ( ; it < end; ++it) {
-        ++needed;
-        if (vec < vec_end) {
-            *vec++ = page_peek_content(it);
+
+    struct bfy_pos const begin_pos = buffer_get_pos(buf, begin_at);
+    struct bfy_pos const end_pos = buffer_get_pos(buf, end_at);
+    struct bfy_page const* const first_page = pages_cbegin(buf) + begin_pos.page_idx;
+    struct bfy_page const* const last_page = pages_cbegin(buf) + end_pos.page_idx;
+    for (struct bfy_page const* it = first_page; it <= last_page; ++it) {
+        struct bfy_iovec io = page_peek_content(it);
+        if (it == last_page) {
+            // maybe [begin..end) omits the back of the last page
+            io.iov_len = end_pos.page_pos;
         }
-    }
-    if (pos.page_pos > 0) {
-        ++needed;
-        if (vec < vec_end) {
-            struct bfy_iovec io = page_peek_content(it);
-            io.iov_len = pos.page_pos;
-            *vec = io;
+        if (it == first_page) {
+            // maybe [begin..end) omits the front of the first page
+            io = iov_drain(io, begin_pos.page_pos);
+        }
+        if (io.iov_len > 0) {
+            ++needed;
+            if (vec < vec_end) {
+                *vec++ = io;
+            }
         }
     }
 
@@ -345,7 +358,7 @@ bfy_buffer_peek(bfy_buffer const* buf, size_t wanted,
 size_t
 bfy_buffer_peek_all(bfy_buffer const* buf,
                     struct bfy_iovec* vec_out, size_t n_vec) {
-    return bfy_buffer_peek(buf, SIZE_MAX, vec_out, n_vec);
+    return bfy_buffer_peek(buf, 0, SIZE_MAX, vec_out, n_vec);
 }
 
 /// adding pages
@@ -761,14 +774,6 @@ bfy_buffer_drain(bfy_buffer* buf, size_t wanted) {
 }
 
 /// copyout
-
-static struct bfy_iovec
-iov_drain(struct bfy_iovec io, size_t len) {
-    len = size_t_min(len, io.iov_len);
-    io.iov_base = (char*)io.iov_base + len;
-    io.iov_len -= len;
-    return io;
-}
 
 static size_t
 buffer_copyout(bfy_buffer const* buf, void* content,

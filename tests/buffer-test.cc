@@ -67,13 +67,20 @@ namespace {
 using changes_t = std::vector<bfy_changed_cb_info>;
 
 size_t buffer_count_pages(bfy_buffer const* buf, size_t n_bytes = SIZE_MAX) {
-    return bfy_buffer_peek(buf, n_bytes, nullptr, 0);
+    return bfy_buffer_peek(buf, 0, n_bytes, nullptr, 0);
 }
 
 auto buffer_get_pages(bfy_buffer const* buf, size_t n_bytes = SIZE_MAX) {
     auto const n = buffer_count_pages(buf, n_bytes);
     auto vecs = std::vector<struct bfy_iovec>(n);
-    bfy_buffer_peek(buf, n_bytes, std::data(vecs), std::size(vecs));
+    bfy_buffer_peek(buf, 0, n_bytes, std::data(vecs), std::size(vecs));
+    return vecs;
+}
+
+auto buffer_peek_range(bfy_buffer const* buf, size_t begin, size_t end) {
+    auto const n = bfy_buffer_peek(buf, begin, end, nullptr, 0);
+    auto vecs = std::vector<struct bfy_iovec>(n);
+    bfy_buffer_peek(buf, begin, end, std::data(vecs), std::size(vecs));
     return vecs;
 }
 
@@ -221,7 +228,7 @@ TEST(Buffer, peek) {
     // test that a single-vec peek works
     auto vecs = std::array<struct bfy_iovec, 4>{};
     std::fill(std::begin(vecs), std::end(vecs), JunkVec);
-    EXPECT_EQ(1, bfy_buffer_peek(&buf, std::size(pt1), std::data(vecs), std::size(vecs)));
+    EXPECT_EQ(1, bfy_buffer_peek(&buf, 0, std::size(pt1), std::data(vecs), std::size(vecs)));
     EXPECT_EQ(std::data(pt1), vecs[0].iov_base);
     EXPECT_EQ(std::size(pt1), vecs[0].iov_len);
     EXPECT_EQ(JunkVec, vecs[1]);
@@ -231,7 +238,7 @@ TEST(Buffer, peek) {
 
     // test that a multivec peek works
     std::fill(std::begin(vecs), std::end(vecs), JunkVec);
-    EXPECT_EQ(2, bfy_buffer_peek(&buf, std::size(pt1)+1, std::data(vecs), std::size(vecs)));
+    EXPECT_EQ(2, bfy_buffer_peek(&buf, 0, std::size(pt1)+1, std::data(vecs), std::size(vecs)));
     EXPECT_EQ(std::data(pt1), vecs[0].iov_base);
     EXPECT_EQ(std::size(pt1), vecs[0].iov_len);
     EXPECT_EQ(std::data(pt2), vecs[1].iov_base);
@@ -244,11 +251,73 @@ TEST(Buffer, peek) {
     // test that the number extents needed is returned
     // even if it's greater than the number of extents passed in
     std::fill(std::begin(vecs), std::end(vecs), JunkVec);
-    EXPECT_EQ(2, bfy_buffer_peek(&buf, std::size(pt1)+std::size(pt2), std::data(vecs), 1));
+    EXPECT_EQ(2, bfy_buffer_peek(&buf, 0, std::size(pt1)+std::size(pt2), std::data(vecs), 1));
     EXPECT_EQ(std::data(pt1), vecs[0].iov_base);
     EXPECT_EQ(std::size(pt1), vecs[0].iov_len);
     EXPECT_EQ(JunkVec, vecs[2]);
 
+    bfy_buffer_destruct(&buf);
+}
+
+TEST(Buffer, peek_with_begin_past_end) {
+    auto buf = bfy_buffer_init();
+    bfy_buffer_add_readonly(&buf, std::data(str1), std::size(str1));
+    EXPECT_EQ(0, bfy_buffer_peek(&buf, std::size(str1), SIZE_MAX, nullptr, 0));
+    bfy_buffer_destruct(&buf);
+}
+
+TEST(Buffer, peek_with_begin_past_end_of_empty) {
+    auto buf = bfy_buffer_init();
+    EXPECT_EQ(0, bfy_buffer_peek(&buf, 1000, SIZE_MAX, nullptr, 0));
+    EXPECT_EQ(0, bfy_buffer_peek(&buf, SIZE_MAX, SIZE_MAX, nullptr, 0));
+    bfy_buffer_destruct(&buf);
+}
+
+TEST(Buffer, peek_range_with_begin_after_end) {
+    auto buf = bfy_buffer_init();
+    auto constexpr& str = str1;
+    bfy_buffer_add_readonly(&buf, std::data(str), std::size(str));
+    auto const expected = std::vector<bfy_iovec> {
+        bfy_iovec{ const_cast<char*>(std::data(str)) + 1, 1 }
+    };
+    EXPECT_EQ(0, bfy_buffer_peek(&buf, 1, 1, nullptr, 0));
+    EXPECT_EQ(expected, buffer_peek_range(&buf, 1, 2));
+    EXPECT_EQ(0, bfy_buffer_peek(&buf, 2, 1, nullptr, 0));
+    EXPECT_EQ(0, bfy_buffer_peek(&buf, 2, 2, nullptr, 0));
+    bfy_buffer_destruct(&buf);
+}
+
+TEST(Buffer, peek_range_across_page_boundary) {
+    auto buf = bfy_buffer_init();
+    bfy_buffer_add_readonly(&buf, std::data(str1), std::size(str1));
+    bfy_buffer_add_readonly(&buf, std::data(str2), std::size(str2));
+    auto const expected = std::vector<bfy_iovec> {
+        bfy_iovec{ const_cast<char*>(std::data(str1)) + std::size(str1)-1, 1 },
+        bfy_iovec{ const_cast<char*>(std::data(str2)), std::size(str2) }
+    };
+    EXPECT_EQ(expected, buffer_peek_range(&buf, std::size(str1)-1, SIZE_MAX));
+    bfy_buffer_destruct(&buf);
+}
+
+TEST(Buffer, peek_range_begin_on_page_boundary) {
+    auto buf = bfy_buffer_init();
+    bfy_buffer_add_readonly(&buf, std::data(str1), std::size(str1));
+    bfy_buffer_add_readonly(&buf, std::data(str2), std::size(str2));
+    auto const expected = std::vector<bfy_iovec> {
+        bfy_iovec{ const_cast<char*>(std::data(str2)), std::size(str2) }
+    };
+    EXPECT_EQ(expected, buffer_peek_range(&buf, std::size(str1), SIZE_MAX));
+    bfy_buffer_destruct(&buf);
+}
+
+TEST(Buffer, peek_when_begin_and_end_are_on_same_page) {
+    auto buf = bfy_buffer_init();
+    auto constexpr& str = str1;
+    bfy_buffer_add_readonly(&buf, std::data(str), std::size(str));
+    auto const expected = std::vector<bfy_iovec> {
+        bfy_iovec{ const_cast<char*>(std::data(str))+1, std::size(str)-2 }
+    };
+    EXPECT_EQ(expected, buffer_peek_range(&buf, 1, std::size(str)-1));
     bfy_buffer_destruct(&buf);
 }
 
@@ -342,17 +411,17 @@ TEST(Buffer, recycles_pages) {
     auto constexpr str = std::string_view { "1234567890" };
     auto array = std::array<char, 16> {};
     bfy_buffer buf = bfy_buffer_init_unmanaged(std::data(array), std::size(array));
-    auto const expected_pages = bfy_buffer_peek_all(&buf, nullptr, 0);
+    EXPECT_EQ(0, buffer_count_pages(&buf));
 
     bfy_buffer_add(&buf, std::data(str), std::size(str));
     EXPECT_EQ(10, bfy_buffer_get_content_len(&buf));
     EXPECT_EQ(6, bfy_buffer_get_space_len(&buf));
-    EXPECT_EQ(expected_pages, bfy_buffer_peek_all(&buf, nullptr, 0));
+    EXPECT_EQ(1, buffer_count_pages(&buf));
 
     bfy_buffer_remove(&buf, std::data(array), 5);
     EXPECT_EQ(5, bfy_buffer_get_content_len(&buf));
     EXPECT_EQ(6, bfy_buffer_get_space_len(&buf));
-    EXPECT_EQ(expected_pages, bfy_buffer_peek_all(&buf, nullptr, 0));
+    EXPECT_EQ(1, buffer_count_pages(&buf));
 
     // now there's not enough space at the end of the page,
     // but there will be if it realigns the content back to
@@ -360,7 +429,7 @@ TEST(Buffer, recycles_pages) {
     bfy_buffer_add(&buf, std::data(str), std::size(str));
     EXPECT_EQ(15, bfy_buffer_get_content_len(&buf));
     EXPECT_EQ(1, bfy_buffer_get_space_len(&buf));
-    EXPECT_EQ(expected_pages, bfy_buffer_peek_all(&buf, nullptr, 0));
+    EXPECT_EQ(1, buffer_count_pages(&buf));
 
     bfy_buffer_destruct(&buf);
 }
