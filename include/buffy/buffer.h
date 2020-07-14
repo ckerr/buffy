@@ -648,7 +648,8 @@ size_t bfy_buffer_get_space_len(bfy_buffer const* buf);
  * @see bfy_buffer_peek_space()
  * @param buf the buffer to be appended to
  * @param len the desired free space, in bytes
- * @return an iovec of the free space
+ * @return an iovec of the free space. This may be less than `len` if
+ *   buffy was unable to allocate enough memory.
  */
 struct bfy_iovec bfy_buffer_reserve_space(bfy_buffer* buf, size_t len);
 

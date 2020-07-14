@@ -477,7 +477,9 @@ bfy_buffer_peek_space(struct bfy_buffer* buf) {
 struct bfy_iovec
 bfy_buffer_reserve_space(struct bfy_buffer* buf, size_t wanted) {
     bfy_buffer_ensure_space(buf, wanted);
-    return bfy_buffer_peek_space(buf);
+    struct bfy_iovec io = bfy_buffer_peek_space(buf);
+    io.iov_len = size_t_min(io.iov_len, wanted);
+    return io;
 }
 
 int

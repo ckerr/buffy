@@ -1050,6 +1050,16 @@ TEST(Buffer, reserve_space) {
     bfy_buffer_destruct(&buf);
 }
 
+TEST(Buffer, reserve_space_never_returns_too_much) {
+    auto constexpr HaveSize = 64;
+    auto constexpr WantSize = HaveSize / 2;
+    BufferWithLocalArray<HaveSize> local;
+    auto const expected_reserve = bfy_iovec { std::data(local.array), WantSize };
+    auto const expected_peek = bfy_iovec { std::data(local.array), HaveSize };
+    EXPECT_EQ(expected_reserve, bfy_buffer_reserve_space(&local.buf, WantSize));
+    EXPECT_EQ(expected_peek, bfy_buffer_peek_space(&local.buf));
+}
+
 TEST(Buffer, commit_space) {
     // setup pt 1: create a buffer
     auto buf = bfy_buffer_init();
