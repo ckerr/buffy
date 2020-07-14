@@ -295,7 +295,7 @@ int bfy_buffer_add_pagebreak(bfy_buffer* buf);
 size_t bfy_buffer_get_content_len(bfy_buffer const* buf);
 
 /**
- * Peeks at the content inside a buffer without removing or draining it.
+ * Peek at contents [begin..end) in the buffer.
  *
  * The `vec_out` structures will be filled with pointers to one or
  * more pages inside the buffer.
@@ -316,15 +316,13 @@ size_t bfy_buffer_get_content_len(bfy_buffer const* buf);
  *   `n_vec` if fewer or more iovecs were needed for the requested data.
  */
 size_t bfy_buffer_peek(bfy_buffer const* buf,
-                       size_t begin,
-                       size_t end,
-                       struct bfy_iovec* vec_out,
-                       size_t vec_len);
+                       size_t begin, size_t end,
+                       struct bfy_iovec* vec_out, size_t vec_len);
 
 /**
  * Peeks at all the content inside a buffer.
  *
- * This is equivalent to `bfy_buffer_peek(buf, SIZE_MAX, vec_out, vec_len)`
+ * Equivalent to `bfy_buffer_peek(buf, 0, SIZE_MAX, vec_out, vec_len)`
  *
  * @see bfy_buffer_peek()
  * @param buf the buffer to inspect.
@@ -359,7 +357,7 @@ size_t bfy_buffer_peek_all(bfy_buffer const* buf,
 char const* bfy_buffer_peek_string(bfy_buffer* buf, size_t* len);
 
 /**
- * Copy content out from the buffer without removing it.
+ * Copy contents [begin..end) from the buffer without removing it.
  *
  * Similar to `bfy_buffer_remove()` in that it lets you access the
  * buffer's contents; but unlike that function, this does not remove
@@ -367,7 +365,6 @@ char const* bfy_buffer_peek_string(bfy_buffer* buf, size_t* len);
  *
  * If a local is not needed, the `peek` functions may be more efficient
  * since they do not involve copying the content.
- *
  *
  * @see bfy_buffer_peek()
  * @see bfy_buffer_remove()
@@ -378,14 +375,15 @@ char const* bfy_buffer_peek_string(bfy_buffer* buf, size_t* len);
  * @param len number of bytes to copy from `buf` to `setme`
  * @return the number of bytes copied
  */
-size_t bfy_buffer_copyout(bfy_buffer const* buf, size_t begin,
-                          void* setme, size_t len);
+size_t bfy_buffer_copyout(bfy_buffer const* buf,
+                          size_t begin, size_t end,
+                          void* setme);
 
 /**
- * Searches for a string within a buffer.
+ * Search buffer contents for a substring.
  *
- * This is equivalent to
- * `bfy_buffer_search_range(buf, 0, SIZE_MAX, needle_needle_len, match)`
+ * Equivalent to
+ * `bfy_buffer_search(buf, 0, SIZE_MAX, needle_needle_len, match)`
  *
  * @param buf the buffer to search
  * @param needle the string to search for
@@ -394,12 +392,12 @@ size_t bfy_buffer_copyout(bfy_buffer const* buf, size_t begin,
  *   to the location within the buffer if the search finds a match.
  * @return 0 if a match was found, -1 on failure.
  */
-int bfy_buffer_search(bfy_buffer const* buf,
-                      void const* needle, size_t needle_len,
-                      size_t* match);
+int bfy_buffer_search_all(bfy_buffer const* buf,
+                          void const* needle, size_t needle_len,
+                          size_t* match);
 
 /**
- * Searches for a string within a buffer.
+ * Search buffer contents [begin..end) for a substring.
  *
  * @param buf the buffer to search
  * @param begin offset inside `buf` where the search should begin
@@ -410,10 +408,10 @@ int bfy_buffer_search(bfy_buffer const* buf,
  *   is found, will be set to the offset in `buf` of the match.
  * @return 0 if a match was found, -1 on failure.
  */
-int bfy_buffer_search_range(bfy_buffer const* buf,
-                            size_t begin, size_t end,
-                            void const* needle, size_t needle_len,
-                            size_t* match);
+int bfy_buffer_search(bfy_buffer const* buf,
+                      size_t begin, size_t end,
+                      void const* needle, size_t needle_len,
+                      size_t* match);
 
 /* CONSUMING CONTENT */
 
@@ -421,11 +419,11 @@ int bfy_buffer_search_range(bfy_buffer const* buf,
  * Copy and remove the first `len` bytes of content from `buf`.
  *
  * @param buf the buffer to remove content from
- * @param setme where to copy the content to
  * @param len how many bytes of content to move from `buf` to `setme`
+ * @param setme where to copy the content to
  * @return the number of bytes moved
  */
-size_t bfy_buffer_remove(bfy_buffer* buf, void* setme, size_t len);
+size_t bfy_buffer_remove(bfy_buffer* buf, size_t len, void* setme);
 
 /**
  * Move data from one buffer to another.
@@ -435,11 +433,11 @@ size_t bfy_buffer_remove(bfy_buffer* buf, void* setme, size_t len);
  *
  * @see bfy_buffer_add_buffer()
  * @param buf the buffer to remove content from
- * @param setme the buffer to receive the content
  * @param len how many bytes of content to move from `buf` to `setme`
+ * @param setme the buffer to receive the content
  * @return the number of bytes moved
  */
-size_t bfy_buffer_remove_buffer(bfy_buffer* buf, bfy_buffer* setme, size_t len);
+size_t bfy_buffer_remove_buffer(bfy_buffer* buf, size_t len, bfy_buffer* setme);
 
 /**
  * Removes a network-endian number from the buffer.

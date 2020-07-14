@@ -87,7 +87,7 @@ auto buffer_peek_range(bfy_buffer const* buf, size_t begin, size_t end) {
 auto buffer_copyout(bfy_buffer const* buf, size_t n_bytes = SIZE_MAX) {
     n_bytes = std::min(n_bytes, bfy_buffer_get_content_len(buf));
     auto bytes = std::vector<char>(n_bytes);
-    bfy_buffer_copyout(buf, 0, std::data(bytes), n_bytes);
+    bfy_buffer_copyout(buf, 0, n_bytes, std::data(bytes));
     return bytes;
 }
 
@@ -418,7 +418,7 @@ TEST(Buffer, recycles_pages) {
     EXPECT_EQ(6, bfy_buffer_get_space_len(&buf));
     EXPECT_EQ(1, buffer_count_pages(&buf));
 
-    bfy_buffer_remove(&buf, std::data(array), 5);
+    bfy_buffer_remove(&buf, 5, std::data(array));
     EXPECT_EQ(5, bfy_buffer_get_content_len(&buf));
     EXPECT_EQ(6, bfy_buffer_get_space_len(&buf));
     EXPECT_EQ(1, buffer_count_pages(&buf));
@@ -776,7 +776,7 @@ TEST(Buffer, copyout_some) {
     // copy out some of it
     auto array = std::array<char, 128>{};
     auto constexpr n_expected = std::size(str1) + 1;
-    auto const n_got = bfy_buffer_copyout(&local.buf, 0, std::data(array), n_expected);
+    auto const n_got = bfy_buffer_copyout(&local.buf, 0, n_expected, std::data(array));
 
     // confirm we got what we expected
     EXPECT_EQ(n_expected, n_got);
@@ -798,7 +798,7 @@ TEST(Buffer, copyout_all) {
     // copy out some of it
     auto array = std::array<char, 128>{};
     auto const n_expected = std::size(local.allstrs);
-    auto const n_got = bfy_buffer_copyout(&local.buf, 0, std::data(array), SIZE_MAX);
+    auto const n_got = bfy_buffer_copyout(&local.buf, 0, SIZE_MAX, std::data(array));
 
     // confirm we got what we expected
     EXPECT_EQ(n_expected, n_got);
@@ -820,7 +820,7 @@ TEST(Buffer, copyout_none) {
     // copy out some of it
     auto array = std::array<char, 64>{};
     auto constexpr n_expected = 0;
-    auto const n_got = bfy_buffer_copyout(&local.buf, 0, std::data(array), n_expected);
+    auto const n_got = bfy_buffer_copyout(&local.buf, 0, n_expected, std::data(array));
 
     // confirm we got what we expected
     EXPECT_EQ(n_expected, n_got);
@@ -835,7 +835,8 @@ TEST(Buffer, copyout_middle_of_first_page) {
     auto local = BufferWithReadonlyStrings {};
     auto array = std::array<char, 64>{};
     auto const n_wanted = std::size(str1) - 3;
-    auto const len = bfy_buffer_copyout(&local.buf, 2, std::data(array), n_wanted);
+    auto constexpr begin = 2;
+    auto const len = bfy_buffer_copyout(&local.buf, begin, begin + n_wanted, std::data(array));
     EXPECT_EQ(len, n_wanted);
     EXPECT_EQ(0, memcmp(std::data(str1)+2, std::data(array), len));
 }
@@ -844,7 +845,9 @@ TEST(Buffer, copyout_first_part_of_last_page) {
     auto local = BufferWithReadonlyStrings {};
     auto array = std::array<char, 64>{};
     auto const n_wanted = std::size(str3) - 1;
-    auto const len = bfy_buffer_copyout(&local.buf, std::size(str1) + std::size(str2), std::data(array), n_wanted);
+    auto const begin = std::size(str1) + std::size(str2);
+    auto const end = begin + n_wanted;
+    auto const len = bfy_buffer_copyout(&local.buf, begin, end,  std::data(array));
     EXPECT_EQ(len, n_wanted);
     EXPECT_EQ(0, memcmp(std::data(str3), std::data(array), len));
 }
@@ -853,7 +856,9 @@ TEST(Buffer, copyout_all_but_first_and_last_char) {
     auto local = BufferWithReadonlyStrings {};
     auto array = std::array<char, 128>{};
     auto const n_wanted = std::size(local.allstrs) - 2;
-    auto const len = bfy_buffer_copyout(&local.buf, 1, std::data(array), n_wanted);
+    auto const begin = 1;
+    auto const end = begin + n_wanted;
+    auto const len = bfy_buffer_copyout(&local.buf, begin, end, std::data(array));
     EXPECT_EQ(len, n_wanted);
     EXPECT_EQ(0, memcmp(std::data(local.allstrs)+1, std::data(array), len));
 }
@@ -926,7 +931,7 @@ TEST(Buffer, remove_empty_buffer) {
     auto const pre_pages_b = buffer_get_pages(&buf);
 
     auto constexpr n_remove = 0;
-    EXPECT_EQ(n_remove, bfy_buffer_remove_buffer(&a.buf, &buf, n_remove));
+    EXPECT_EQ(n_remove, bfy_buffer_remove_buffer(&a.buf, n_remove, &buf));
     EXPECT_EQ(pre_pages_a, buffer_get_pages(&a.buf));
     EXPECT_EQ(pre_pages_b, buffer_get_pages(&buf));
 
@@ -942,7 +947,7 @@ TEST(Buffer, remove_buffer_on_page_boundary) {
 
     // remove part of the buffer on what we know is a page boundary
     auto const n_remove = pre_pages_a.front().iov_len;
-    EXPECT_EQ(n_remove, bfy_buffer_remove_buffer(&a.buf, &b.buf, n_remove));
+    EXPECT_EQ(n_remove, bfy_buffer_remove_buffer(&a.buf, n_remove, &b.buf));
 
     // confirm that the page was just moved over verbatim
     auto expected_pages_a = std::vector<bfy_iovec> { pre_pages_a };
@@ -964,7 +969,7 @@ TEST(Buffer, remove_part_of_first_page) {
     // remove half of the first buffer so that we know we're
     // forcing a page to be split in half
     auto const n_remove = pre_pages_a.front().iov_len / 2;
-    EXPECT_EQ(n_remove, bfy_buffer_remove_buffer(&a.buf, &buf, n_remove));
+    EXPECT_EQ(n_remove, bfy_buffer_remove_buffer(&a.buf, n_remove, &buf));
 
     // confirm that each buffer's contents are what we expect
     auto expected_contents_a = std::vector<char> { pre_contents_a };
@@ -995,7 +1000,7 @@ TEST(Buffer, remove_nothing_from_empty_buf) {
 
     // remove nothing
     auto constexpr n_remove = 0;
-    EXPECT_EQ(n_remove, bfy_buffer_remove_buffer(&a, &b, n_remove));
+    EXPECT_EQ(n_remove, bfy_buffer_remove_buffer(&a, n_remove, &b));
 
     // confirm that nothing changed
     EXPECT_EQ(pre_contents_a, buffer_copyout(&a));
@@ -1173,7 +1178,7 @@ TEST(Buffer, search_not_present) {
     auto pos = expected_pos;
 
     // confirm that the search fails and pos is unchanged
-    EXPECT_EQ(-1, bfy_buffer_search(&local.buf, std::data(needle), std::size(needle), &pos));
+    EXPECT_EQ(-1, bfy_buffer_search_all(&local.buf, std::data(needle), std::size(needle), &pos));
     EXPECT_EQ(expected_pos, pos);
 }
 
@@ -1183,10 +1188,10 @@ TEST(Buffer, search_only_matches_before_range) {
     auto constexpr expected_pos = size_t { 999 };
     auto pos = expected_pos;
 
-    EXPECT_EQ(-1, bfy_buffer_search_range(&local.buf,
-                                          1, SIZE_MAX,
-                                          std::data(needle), std::size(needle),
-                                          &pos));
+    EXPECT_EQ(-1, bfy_buffer_search(&local.buf,
+                                    1, SIZE_MAX,
+                                    std::data(needle), std::size(needle),
+                                    &pos));
     EXPECT_EQ(expected_pos, pos);
 }
 
@@ -1196,10 +1201,10 @@ TEST(Buffer, search_only_matches_after_range) {
     auto constexpr expected_pos = size_t { 999 };
     auto pos = expected_pos;
 
-    EXPECT_EQ(-1, bfy_buffer_search_range(&local.buf,
-                                          0, std::size(local.allstrs) - 1,
-                                          std::data(needle), std::size(needle),
-                                          &pos));
+    EXPECT_EQ(-1, bfy_buffer_search(&local.buf,
+                                    0, std::size(local.allstrs) - 1,
+                                    std::data(needle), std::size(needle),
+                                    &pos));
     EXPECT_EQ(expected_pos, pos);
 }
 
@@ -1210,7 +1215,7 @@ TEST(Buffer, search_match_in_first_page) {
     auto constexpr needle = str1.substr(1);
     auto pos = size_t {};
 
-    EXPECT_EQ(0, bfy_buffer_search(&local.buf, std::data(needle), std::size(needle), &pos));
+    EXPECT_EQ(0, bfy_buffer_search_all(&local.buf, std::data(needle), std::size(needle), &pos));
     EXPECT_EQ(skip, pos);
 }
 
@@ -1221,7 +1226,7 @@ TEST(Buffer, search_match_crossing_pages) {
     auto const needle = std::string{str1.substr(skip)} + std::string{str2.substr(0, std::size(str2)-1)};
     auto pos = size_t {};
 
-    EXPECT_EQ(0, bfy_buffer_search(&local.buf, std::data(needle), std::size(needle), &pos));
+    EXPECT_EQ(0, bfy_buffer_search_all(&local.buf, std::data(needle), std::size(needle), &pos));
     EXPECT_EQ(skip, pos);
 }
 
@@ -1232,7 +1237,7 @@ TEST(Buffer, search_match_crossing_multiple_pages) {
     auto const needle = local.allstrs.substr(skip, std::size(local.allstrs)-(skip*2));
     auto pos = size_t {};
 
-    EXPECT_EQ(0, bfy_buffer_search(&local.buf, std::data(needle), std::size(needle), &pos));
+    EXPECT_EQ(0, bfy_buffer_search_all(&local.buf, std::data(needle), std::size(needle), &pos));
     EXPECT_EQ(skip, pos);
 }
 
@@ -1242,7 +1247,7 @@ TEST(Buffer, search_match_at_end) {
     auto const needle = local.allstrs.substr(std::size(str1) + std::size(str2)/2);
     auto pos = size_t {};
 
-    EXPECT_EQ(0, bfy_buffer_search(&local.buf, std::data(needle), std::size(needle), &pos));
+    EXPECT_EQ(0, bfy_buffer_search_all(&local.buf, std::data(needle), std::size(needle), &pos));
     EXPECT_EQ(std::size(local.allstrs) - std::size(needle), pos);
 }
 
@@ -1252,7 +1257,7 @@ TEST(Buffer, search_almost_match_at_end) {
     auto const needle = std::string{str3} + " but this part is not in the buffer";
     auto pos = size_t {};
 
-    EXPECT_EQ(-1, bfy_buffer_search(&local.buf, std::data(needle), std::size(needle), &pos));
+    EXPECT_EQ(-1, bfy_buffer_search_all(&local.buf, std::data(needle), std::size(needle), &pos));
 }
 
 TEST(Buffer, search_almost_match_at_page_break) {
@@ -1269,7 +1274,7 @@ TEST(Buffer, search_almost_match_at_page_break) {
     auto constexpr expected_pos = std::size(a) + std::size(b) - 1;
     auto pos = size_t {};
 
-    EXPECT_EQ(0, bfy_buffer_search(&buf, std::data(needle), std::size(needle), &pos));
+    EXPECT_EQ(0, bfy_buffer_search_all(&buf, std::data(needle), std::size(needle), &pos));
     EXPECT_EQ(expected_pos, pos);
 
     bfy_buffer_destruct(&buf);
@@ -1287,7 +1292,7 @@ TEST(Buffer, false_match_before_real_match_across_page_break) {
     auto constexpr expected_pos = std::size(one) + std::size(two) - std::size(needle);
     auto pos = size_t {};
 
-    EXPECT_EQ(0, bfy_buffer_search(&buf, std::data(needle), std::size(needle), &pos));
+    EXPECT_EQ(0, bfy_buffer_search_all(&buf, std::data(needle), std::size(needle), &pos));
     EXPECT_EQ(expected_pos, pos);
 
     bfy_buffer_destruct(&buf);
@@ -1309,7 +1314,7 @@ TEST(Buffer, search_very_long_buffer) {
 
     auto pos = size_t {};
     auto constexpr expected_pos = std::size(noise) * n_noise;
-    EXPECT_EQ(0, bfy_buffer_search(&buf, std::data(needle), std::size(needle), &pos));
+    EXPECT_EQ(0, bfy_buffer_search_all(&buf, std::data(needle), std::size(needle), &pos));
     EXPECT_EQ(expected_pos, pos);
 
     bfy_buffer_destruct(&buf);
@@ -1470,7 +1475,7 @@ TEST(Buffer, change_event_copyout) {
     auto array = std::array<char, wanted> {};
 
     local.start_listening_to_changes();
-    EXPECT_EQ(wanted, bfy_buffer_copyout(&local.buf, 0, std::data(array), wanted));
+    EXPECT_EQ(wanted, bfy_buffer_copyout(&local.buf, 0, wanted, std::data(array)));
     EXPECT_EQ(0, std::size(local.changes));
 }
 
@@ -1503,7 +1508,7 @@ TEST(Buffer, change_event_remove) {
         };
 
         mabel.start_listening_to_changes();
-        EXPECT_EQ(i, bfy_buffer_remove(&mabel.buf, std::data(array), i));
+        EXPECT_EQ(i, bfy_buffer_remove(&mabel.buf, i, std::data(array)));
         EXPECT_EQ(changes_t{expected}, mabel.changes);
     }
 }
@@ -1523,7 +1528,7 @@ TEST(Buffer, change_event_remove_buffer) {
 
         mabel.start_listening_to_changes();
         BufferWithReadonlyStrings tgt;
-        EXPECT_EQ(i, bfy_buffer_remove_buffer(&mabel.buf, &tgt.buf, i));
+        EXPECT_EQ(i, bfy_buffer_remove_buffer(&mabel.buf, i, &tgt.buf));
         EXPECT_EQ(changes_t{expected}, mabel.changes);
     }
 }

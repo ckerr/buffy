@@ -656,7 +656,7 @@ bfy_buffer_add_pagebreak(struct bfy_buffer* buf) {
 int
 bfy_buffer_add_buffer(bfy_buffer* buf, bfy_buffer* src) {
     size_t const new_content_len = bfy_buffer_get_content_len(src);
-    return new_content_len == bfy_buffer_remove_buffer(src, buf, new_content_len) ? 0 : -1;
+    return new_content_len == bfy_buffer_remove_buffer(src, new_content_len, buf) ? 0 : -1;
 }
 
 /// drain
@@ -778,9 +778,11 @@ bfy_buffer_drain(bfy_buffer* buf, size_t wanted) {
 /// copyout
 
 static size_t
-buffer_copyout(bfy_buffer const* buf, void* content,
-               struct bfy_pos begin, struct bfy_pos end) {
-    char* tgt = content;
+buffer_copyout(bfy_buffer const* buf,
+               struct bfy_pos begin,
+               struct bfy_pos end,
+               void* setme) {
+    char* tgt = setme;
 
     struct bfy_page const* const first_page = pages_cbegin(buf) + begin.page_idx;
     struct bfy_page const* const last_page = pages_cbegin(buf) + end.page_idx;
@@ -802,31 +804,34 @@ buffer_copyout(bfy_buffer const* buf, void* content,
         tgt += io.iov_len;
     }
 
-    size_t const copied_len = tgt - (const char*)content;
+    size_t const copied_len = tgt - (const char*)setme;
     assert(copied_len == (end.content_pos - begin.content_pos));
     return copied_len;
 }
 
 size_t
-bfy_buffer_copyout(bfy_buffer const* buf, size_t begin, void* data, size_t len) {
-    struct bfy_pos const begin_pos = buffer_get_pos(buf, begin);
-    struct bfy_pos const end_pos = buffer_get_pos(buf, begin + len);
-    return buffer_copyout(buf, data, begin_pos, end_pos);
+bfy_buffer_copyout(bfy_buffer const* buf, size_t begin, size_t end, void* setme) {
+    return buffer_copyout(buf,
+                          buffer_get_pos(buf, begin),
+                          buffer_get_pos(buf, end),
+                          setme);
 }
 
 /// remove
 
 static size_t
-buffer_remove(bfy_buffer* buf, void* data, struct bfy_pos end) {
-    size_t const n_copied = buffer_copyout(buf, data, buffer_get_pos(buf, 0), end);
+buffer_remove(bfy_buffer* buf, struct bfy_pos end, void* data) {
+    size_t const n_copied = buffer_copyout(buf, buffer_get_pos(buf, 0), end, data);
     size_t const n_drained = buffer_drain(buf, end, 0);
     assert(n_copied == n_drained);
     return n_copied;
 }
 
 size_t
-bfy_buffer_remove(bfy_buffer* buf, void* data, size_t wanted) {
-    return buffer_remove(buf, data, buffer_get_pos(buf, wanted));
+bfy_buffer_remove(bfy_buffer* buf, size_t wanted, void* setme) {
+    return buffer_remove(buf,
+                         buffer_get_pos(buf, wanted),
+                         setme);
 }
 
 static void*
@@ -882,7 +887,7 @@ bfy_buffer_remove_string(bfy_buffer* buf, size_t* setme_len) {
         size_t moved_len = 0;
         ret = allocator.malloc(pos.content_pos);
         if (ret != NULL) {
-            moved_len = buffer_remove(buf, ret, pos);
+            moved_len = buffer_remove(buf, pos, ret);
             assert(moved_len == pos.content_pos);
         }
     }
@@ -894,7 +899,7 @@ bfy_buffer_remove_string(bfy_buffer* buf, size_t* setme_len) {
 uint8_t
 bfy_buffer_remove_ntoh_u8(struct bfy_buffer* buf) {
     uint8_t val = 0;
-    size_t const len = bfy_buffer_remove(buf, &val, sizeof(val));
+    size_t const len = bfy_buffer_remove(buf, sizeof(val), &val);
     if (len != sizeof(val)) {
         errno = ENOMSG;
     }
@@ -904,7 +909,7 @@ bfy_buffer_remove_ntoh_u8(struct bfy_buffer* buf) {
 uint16_t
 bfy_buffer_remove_ntoh_u16(struct bfy_buffer* buf) {
     uint16_t val = 0;
-    size_t const len = bfy_buffer_remove(buf, &val, sizeof(val));
+    size_t const len = bfy_buffer_remove(buf, sizeof(val), &val);
     if (len == sizeof(val)) {
         val = ntoh16(val);
     } else {
@@ -916,7 +921,7 @@ bfy_buffer_remove_ntoh_u16(struct bfy_buffer* buf) {
 uint32_t
 bfy_buffer_remove_ntoh_u32(struct bfy_buffer* buf) {
     uint32_t val = 0;
-    size_t const len = bfy_buffer_remove(buf, &val, sizeof(val));
+    size_t const len = bfy_buffer_remove(buf, sizeof(val),  &val);
     if (len == sizeof(val)) {
         val = ntoh32(val);
     } else {
@@ -928,7 +933,7 @@ bfy_buffer_remove_ntoh_u32(struct bfy_buffer* buf) {
 uint64_t
 bfy_buffer_remove_ntoh_u64(struct bfy_buffer* buf) {
     uint64_t val = 0;
-    size_t const len = bfy_buffer_remove(buf, &val, sizeof(val));
+    size_t const len = bfy_buffer_remove(buf, sizeof(val), &val);
     if (len == sizeof(val)) {
         val = ntoh64(val);
     } else {
@@ -938,7 +943,7 @@ bfy_buffer_remove_ntoh_u64(struct bfy_buffer* buf) {
 }
 
 size_t
-bfy_buffer_remove_buffer(bfy_buffer* buf, bfy_buffer* tgt, size_t wanted) {
+bfy_buffer_remove_buffer(bfy_buffer* buf, size_t wanted, bfy_buffer* tgt) {
     struct bfy_pos end = buffer_get_pos(buf, wanted);
 
     if (end.page_idx > 0 && end.content_pos > 0) {
@@ -969,13 +974,13 @@ bfy_buffer_make_contiguous(bfy_buffer* buf, size_t wanted) {
     // if we have enough space, use it
     struct bfy_iovec space = bfy_buffer_peek_space(buf);
     if (space.iov_len >= pos.content_pos) {
-        size_t const n_copied = bfy_buffer_copyout(buf, 0, space.iov_base, pos.content_pos);
+        size_t const n_copied = buffer_copyout(buf, buffer_get_pos(buf, 0), pos, space.iov_base);
         bfy_buffer_commit_space(buf, n_copied);
         bfy_buffer_drain(buf, n_copied);
     } else {
         // make some new free space, use it, and prepend it
         int8_t* data = allocator.malloc(pos.content_pos);
-        size_t const n_moved = buffer_remove(buf, data, pos);
+        size_t const n_moved = buffer_remove(buf, pos, data);
         struct bfy_page const newpage = {
             .data = data,
             .size = n_moved,
@@ -1066,10 +1071,10 @@ buffer_search_iovec(struct bfy_iovec const io,
 }
 
 static int
-buffer_search_range(bfy_buffer const* buf,
-                    struct bfy_pos begin, struct bfy_pos end,
-                    void const* needle, size_t needle_len,
-                    size_t* setme) {
+buffer_search(bfy_buffer const* buf,
+              struct bfy_pos begin, struct bfy_pos end,
+              void const* needle, size_t needle_len,
+              size_t* setme) {
     struct bfy_pos walk = begin;
     while (walk.content_pos + needle_len <= end.content_pos) {
         struct bfy_iovec const io = buffer_peek_content_at_pos(buf, walk);
@@ -1091,20 +1096,21 @@ buffer_search_range(bfy_buffer const* buf,
 }
 
 int
-bfy_buffer_search_range(bfy_buffer const* buf,
-                        size_t ibegin, size_t iend,
-                        void const* needle, size_t needle_len,
-                        size_t* match) {
-    struct bfy_pos begin = buffer_get_pos(buf, ibegin);
-    struct bfy_pos end = buffer_get_pos(buf, iend);
-    return buffer_search_range(buf, begin, end, needle, needle_len, match);
+bfy_buffer_search(bfy_buffer const* buf,
+                  size_t begin, size_t end,
+                  void const* needle, size_t needle_len,
+                  size_t* setme_match) {
+    return buffer_search(buf,
+                         buffer_get_pos(buf, begin),
+                         buffer_get_pos(buf, end),
+                         needle, needle_len, setme_match);
 }
 
 int
-bfy_buffer_search(bfy_buffer const* buf,
-                  void const* needle, size_t needle_len,
-                  size_t* match) {
-    return bfy_buffer_search_range(buf, 0, SIZE_MAX, needle, needle_len, match);
+bfy_buffer_search_all(bfy_buffer const* buf,
+                      void const* needle, size_t needle_len,
+                      size_t* setme_match) {
+    return bfy_buffer_search(buf, 0, SIZE_MAX, needle, needle_len, setme_match);
 }
 
 /// life cycle
