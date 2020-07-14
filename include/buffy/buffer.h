@@ -449,38 +449,42 @@ size_t bfy_buffer_remove_buffer(bfy_buffer* buf, bfy_buffer* setme, size_t len);
  * This uint8_t function is provided for consistency with the other
  * endian functions, although endian order is moot on a uint8_t.
  *
+ * Sets errno on failure.
+ *
  * @see bfy_buffer_add_hton_u8()
- * @param buf the buffer to which the content will be added
- * @param value host-endian number to be converted and added
- * @return 0 on success, -1 on failure
+ * @param buf the buffer from which the content will be removed
+ * @return the uint8_t value
  */
-int bfy_buffer_remove_ntoh_u8(bfy_buffer* buf, uint8_t* setme);
+uint8_t bfy_buffer_remove_ntoh_u8(bfy_buffer* buf);
 
 /**
  * Removes a network-endian number from the buffer.
  *
  * Convenience utility to convert a number from network-endian
  * into host-endian after removing it from the buffer.
+ *
+ * Sets errno on failure.
  *
  * @see bfy_buffer_add_hton_u16()
- * @param buf the buffer to which the content will be added
- * @param value host-endian number to be converted and added
- * @return 0 on success, -1 on failure
+ * @param buf the buffer from which the content will be removed
+ * @return the uint16_t value
  */
-int bfy_buffer_remove_ntoh_u16(bfy_buffer* buf, uint16_t* setme);
+uint16_t bfy_buffer_remove_ntoh_u16(bfy_buffer* buf);
 
 /**
  * Removes a network-endian number from the buffer.
  *
  * Convenience utility to convert a number from network-endian
  * into host-endian after removing it from the buffer.
+ *
+ * Sets errno on failure.
  *
  * @see bfy_buffer_add_hton_u32()
- * @param buf the buffer to which the content will be added
- * @param value host-endian number to be converted and added
+ * @param buf the buffer from which the content will be removed
  * @return 0 on success, -1 on failure
+ * @return the uint32_t value
  */
-int bfy_buffer_remove_ntoh_u32(bfy_buffer* buf, uint32_t* setme);
+uint32_t bfy_buffer_remove_ntoh_u32(bfy_buffer* buf);
 
 /**
  * Removes a network-endian number from the buffer.
@@ -488,12 +492,13 @@ int bfy_buffer_remove_ntoh_u32(bfy_buffer* buf, uint32_t* setme);
  * Convenience utility to convert a number from network-endian
  * into host-endian after removing it from the buffer.
  *
+ * Sets errno on failure.
+ *
  * @see bfy_buffer_add_hton_u64()
- * @param buf the buffer to which the content will be added
- * @param value host-endian number to be converted and added
- * @return 0 on success, -1 on failure
+ * @param buf the buffer from which the content will be removed
+ * @return the uint64_t value
  */
-int bfy_buffer_remove_ntoh_u64(bfy_buffer* buf, uint64_t* setme);
+uint64_t bfy_buffer_remove_ntoh_u64(bfy_buffer* buf);
 
 /**
  * Removes the entire buffer as a newly-allocated string.

@@ -891,43 +891,50 @@ bfy_buffer_remove_string(bfy_buffer* buf, size_t* setme_len) {
     return ret;
 }
 
-int
-bfy_buffer_remove_ntoh_u8(struct bfy_buffer* buf, uint8_t* setme) {
-    size_t const len = bfy_buffer_remove(buf, setme, sizeof(*setme));
-    return len == sizeof(*setme) ? 0 : -1;
+uint8_t
+bfy_buffer_remove_ntoh_u8(struct bfy_buffer* buf) {
+    uint8_t val = 0;
+    size_t const len = bfy_buffer_remove(buf, &val, sizeof(val));
+    if (len != sizeof(val)) {
+        errno = ENOMSG;
+    }
+    return val;
 }
 
-int
-bfy_buffer_remove_ntoh_u16(struct bfy_buffer* buf, uint16_t* setme) {
-    uint16_t tmp;
-    size_t const len = bfy_buffer_remove(buf, &tmp, sizeof(tmp));
-    if (len == sizeof(tmp)) {
-        *setme = ntoh16(tmp);
-        return 0;
+uint16_t
+bfy_buffer_remove_ntoh_u16(struct bfy_buffer* buf) {
+    uint16_t val = 0;
+    size_t const len = bfy_buffer_remove(buf, &val, sizeof(val));
+    if (len == sizeof(val)) {
+        val = ntoh16(val);
+    } else {
+        errno = ENOMSG;
     }
-    return -1;
+    return val;
 }
 
-int
-bfy_buffer_remove_ntoh_u32(struct bfy_buffer* buf, uint32_t* setme) {
-    uint32_t tmp;
-    size_t const len = bfy_buffer_remove(buf, &tmp, sizeof(tmp));
-    if (len == sizeof(tmp)) {
-        *setme = ntoh32(tmp);
-        return 0;
+uint32_t
+bfy_buffer_remove_ntoh_u32(struct bfy_buffer* buf) {
+    uint32_t val = 0;
+    size_t const len = bfy_buffer_remove(buf, &val, sizeof(val));
+    if (len == sizeof(val)) {
+        val = ntoh32(val);
+    } else {
+        errno = ENOMSG;
     }
-    return -1;
+    return val;
 }
 
-int
-bfy_buffer_remove_ntoh_u64(struct bfy_buffer* buf, uint64_t* setme) {
-    uint64_t tmp;
-    size_t const len = bfy_buffer_remove(buf, &tmp, sizeof(tmp));
-    if (len == sizeof(tmp)) {
-        *setme = ntoh64(tmp);
-        return 0;
+uint64_t
+bfy_buffer_remove_ntoh_u64(struct bfy_buffer* buf) {
+    uint64_t val = 0;
+    size_t const len = bfy_buffer_remove(buf, &val, sizeof(val));
+    if (len == sizeof(val)) {
+        val = ntoh64(val);
+    } else {
+        errno = ENOMSG;
     }
-    return -1;
+    return val;
 }
 
 size_t

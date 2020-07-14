@@ -864,33 +864,27 @@ TEST(Buffer, endian_16) {
     BufferWithLocalArray<64> local;
     auto const in = uint16_t { 1 };
     auto const expected = hton16(in);
-    auto out = std::remove_cv_t<decltype(in)> {};
     EXPECT_EQ(0, bfy_buffer_add_hton_u16(&local.buf, in));
     EXPECT_TRUE(std::equal(std::data(local.array), std::data(local.array)+sizeof(expected), reinterpret_cast<char const*>(&expected)));
-    EXPECT_EQ(0, bfy_buffer_remove_ntoh_u16(&local.buf, &out));
-    EXPECT_EQ(in, out);
+    EXPECT_EQ(in, bfy_buffer_remove_ntoh_u16(&local.buf));
 }
 
 TEST(Buffer, endian_32) {
     BufferWithLocalArray<64> local;
     auto const in = uint32_t { 1 };
     auto const expected = hton32(in);
-    auto out = std::remove_cv_t<decltype(in)> {};
     EXPECT_EQ(0, bfy_buffer_add_hton_u32(&local.buf, in));
     EXPECT_TRUE(std::equal(std::data(local.array), std::data(local.array)+sizeof(expected), reinterpret_cast<char const*>(&expected)));
-    EXPECT_EQ(0, bfy_buffer_remove_ntoh_u32(&local.buf, &out));
-    EXPECT_EQ(in, out);
+    EXPECT_EQ(in, bfy_buffer_remove_ntoh_u32(&local.buf));
 }
 
 TEST(Buffer, endian_64) {
     BufferWithLocalArray<64> local;
     auto const in = uint64_t { 1 };
     auto const expected = hton64(in);
-    auto out = std::remove_cv_t<decltype(in)> {};
     EXPECT_EQ(0, bfy_buffer_add_hton_u64(&local.buf, in));
     EXPECT_TRUE(std::equal(std::data(local.array), std::data(local.array)+sizeof(expected), reinterpret_cast<char const*>(&expected)));
-    EXPECT_EQ(0, bfy_buffer_remove_ntoh_u64(&local.buf, &out));
-    EXPECT_EQ(in, out);
+    EXPECT_EQ(in, bfy_buffer_remove_ntoh_u64(&local.buf));
 }
 
 TEST(Buffer, add_buffer) {
@@ -1536,57 +1530,53 @@ TEST(Buffer, change_event_remove_buffer) {
 
 TEST(Buffer, change_event_remove_ntoh_u8) {
     BufferWithReadonlyStrings local;
-    auto setme = uint8_t {};
     auto const expected = bfy_changed_cb_info {
         .orig_size = bfy_buffer_get_content_len(&local.buf),
         .n_added = 0,
-        .n_deleted = sizeof(setme)
+        .n_deleted = sizeof(uint8_t)
     };
 
     local.start_listening_to_changes();
-    EXPECT_EQ(0, bfy_buffer_remove_ntoh_u8(&local.buf, &setme));
+    bfy_buffer_remove_ntoh_u8(&local.buf);
     EXPECT_EQ(changes_t{expected}, local.changes);
 }
 
 TEST(Buffer, change_event_remove_ntoh_u16) {
     BufferWithReadonlyStrings local;
-    auto setme = uint16_t {};
     auto const expected = bfy_changed_cb_info {
         .orig_size = bfy_buffer_get_content_len(&local.buf),
         .n_added = 0,
-        .n_deleted = sizeof(setme)
+        .n_deleted = sizeof(uint16_t)
     };
 
     local.start_listening_to_changes();
-    EXPECT_EQ(0, bfy_buffer_remove_ntoh_u16(&local.buf, &setme));
+    bfy_buffer_remove_ntoh_u16(&local.buf);
     EXPECT_EQ(changes_t{expected}, local.changes);
 }
 
 TEST(Buffer, change_event_remove_ntoh_u32) {
     BufferWithReadonlyStrings local;
-    auto setme = uint32_t {};
     auto const expected = bfy_changed_cb_info {
         .orig_size = bfy_buffer_get_content_len(&local.buf),
         .n_added = 0,
-        .n_deleted = sizeof(setme)
+        .n_deleted = sizeof(uint32_t)
     };
 
     local.start_listening_to_changes();
-    EXPECT_EQ(0, bfy_buffer_remove_ntoh_u32(&local.buf, &setme));
+    bfy_buffer_remove_ntoh_u32(&local.buf);
     EXPECT_EQ(changes_t{expected}, local.changes);
 }
 
 TEST(Buffer, change_event_remove_ntoh_u64) {
     BufferWithReadonlyStrings local;
-    auto setme = uint64_t {};
     auto const expected = bfy_changed_cb_info {
         .orig_size = bfy_buffer_get_content_len(&local.buf),
         .n_added = 0,
-        .n_deleted = sizeof(setme)
+        .n_deleted = sizeof(uint64_t)
     };
 
     local.start_listening_to_changes();
-    EXPECT_EQ(0, bfy_buffer_remove_ntoh_u64(&local.buf, &setme));
+    bfy_buffer_remove_ntoh_u64(&local.buf);
     EXPECT_EQ(changes_t{expected}, local.changes);
 }
 
