@@ -315,26 +315,24 @@ size_t bfy_buffer_get_content_len(bfy_buffer const* buf);
  * @return The number of iovecs needed. This may be less or more than
  *   `n_vec` if fewer or more iovecs were needed for the requested data.
  */
-size_t bfy_buffer_peek(bfy_buffer const* buf,
-                       size_t begin, size_t end,
-                       struct bfy_iovec* vec_out, size_t vec_len);
+size_t bfy_buffer_peek_range(bfy_buffer const* buf,
+                             size_t begin, size_t end,
+                             struct bfy_iovec* vec_out, size_t vec_len);
 
 /**
  * Peeks at all the content inside a buffer.
  *
  * Equivalent to `bfy_buffer_peek(buf, 0, SIZE_MAX, vec_out, vec_len)`
- *
- * @see bfy_buffer_peek()
- * @param buf the buffer to inspect.
- * @param out an array of `n_out` bfy_iovecs.
- * @param n_vec the number of items in the `out` array. If `n_vec`
- *   is 0, we only count how many iovecs would be needed to point
- *   to the amount of requested data.
- * @return The number of iovecs needed. This may be less or more than
- *   `n_vec` if fewer or more iovecs were needed for the requested data.
  */
 size_t bfy_buffer_peek_all(bfy_buffer const* buf,
                            struct bfy_iovec* vec_out, size_t vec_len);
+/**
+ * Peeks at the first `len` bytes of content in a buffer.
+ *
+ * Equivalent to `bfy_buffer_peek(buf, 0, len, vec_out, vec_len)`
+ */
+size_t bfy_buffer_peek(bfy_buffer const* buf, size_t len,
+                       struct bfy_iovec* vec_out, size_t vec_len);
 
 /**
  * Returns a buffer-managed string of the buffer's contents.
@@ -375,26 +373,17 @@ char const* bfy_buffer_peek_string(bfy_buffer* buf, size_t* len);
  * @param len number of bytes to copy from `buf` to `setme`
  * @return the number of bytes copied
  */
-size_t bfy_buffer_copyout(bfy_buffer const* buf,
-                          size_t begin, size_t end,
-                          void* setme);
+size_t bfy_buffer_copyout_range(bfy_buffer const* buf,
+                                size_t begin, size_t end,
+                                void* setme);
 
 /**
- * Search buffer contents for a substring.
+ * Copy the first `len` bytes from the beginning of the buffer.
  *
- * Equivalent to
- * `bfy_buffer_search(buf, 0, SIZE_MAX, needle_needle_len, match)`
- *
- * @param buf the buffer to search
- * @param needle the string to search for
- * @param needle_len len the length of `needle`
- * @param match pointer to size_t offset that, if non-NULL, will be set
- *   to the location within the buffer if the search finds a match.
- * @return 0 if a match was found, -1 on failure.
+ * Equivalent to `bfy_buffer_copyout_range(buf, 0, len, setme)`
  */
-int bfy_buffer_search_all(bfy_buffer const* buf,
-                          void const* needle, size_t needle_len,
-                          size_t* match);
+size_t bfy_buffer_copyout(bfy_buffer const* buf, size_t len,
+                          void* setme);
 
 /**
  * Search buffer contents [begin..end) for a substring.
@@ -408,20 +397,51 @@ int bfy_buffer_search_all(bfy_buffer const* buf,
  *   is found, will be set to the offset in `buf` of the match.
  * @return 0 if a match was found, -1 on failure.
  */
+int bfy_buffer_search_range(bfy_buffer const* buf,
+                            size_t begin, size_t end,
+                            void const* needle, size_t needle_len,
+                            size_t* match);
+/**
+ * Search buffer contents for a substring.
+ *
+ * Equivalent to
+ * `bfy_buffer_search_range(buf, 0, SIZE_MAX, needle, needle_len, match)`
+ */
+int bfy_buffer_search_all(bfy_buffer const* buf,
+                          void const* needle, size_t needle_len,
+                          size_t* match);
+
+/**
+ * Search the first `len` bytes of content for a substring.
+ *
+ * Equivalent to
+ * `bfy_buffer_search_range(buf, 0, len, needle, needle_len, match)`
+ */
 int bfy_buffer_search(bfy_buffer const* buf,
-                      size_t begin, size_t end,
+                      size_t len,
                       void const* needle, size_t needle_len,
                       size_t* match);
+
 
 /* CONSUMING CONTENT */
 
 /**
- * Copy and remove the first `len` bytes of content from `buf`.
+ * Copy and remove contents [begin..end) from a buffer.
  *
  * @param buf the buffer to remove content from
- * @param len how many bytes of content to move from `buf` to `setme`
+ * @param begin offset into the buffer's contents to begin removing
+ * @param end offset into the buffer's contents to not remove
  * @param setme where to copy the content to
- * @return the number of bytes moved
+ * @return the number of bytes removed
+ */
+size_t bfy_buffer_remove_range(bfy_buffer* buf,
+                               size_t begin, size_t end,
+                               void* setme);
+
+/**
+ * Copy and remove the first `len` bytes of content from `buf`.
+ *
+ * Equivalent to `bfy_buffer_remove_range(buf, 0, len, setme)`
  */
 size_t bfy_buffer_remove(bfy_buffer* buf, size_t len, void* setme);
 
@@ -516,7 +536,7 @@ char* bfy_buffer_remove_string(bfy_buffer* buf, size_t* len);
 /* DRAINING CONTENT */
 
 /**
- * Remove `len` bytes of content from the beginning of the buffer.
+ * Remove contents [begin..end) from a buffer.
  *
  * @see bfy_buffer_remove()
  * @see bfy_buffer_copyout()
@@ -524,14 +544,21 @@ char* bfy_buffer_remove_string(bfy_buffer* buf, size_t* len);
  * @param len how much content to remove, in bytes
  * @return how much content was removed, in bytes
  */
-size_t bfy_buffer_drain(bfy_buffer* buf, size_t len);
+size_t bfy_buffer_drain_range(bfy_buffer* buf, size_t begin, size_t end);
 
 /**
  * Drain all content from the buffer.
  *
- * Equivalent to `bfy_buffer_drain(buf, SIZE_MAX)`
+ * Equivalent to `bfy_buffer_drain_range(buf, 0, SIZE_MAX)`
  */
 size_t bfy_buffer_drain_all(bfy_buffer* buf);
+
+/**
+ * Drain the first `len` bytes of content from a buffer.
+ *
+ * Equivalent to `bfy_buffer_drain_range(buf, 0, len)`
+ */
+size_t bfy_buffer_drain(bfy_buffer* buf, size_t len);
 
 /* CHANGE NOTIFICATIONS */
 
@@ -542,7 +569,9 @@ size_t bfy_buffer_drain_all(bfy_buffer* buf);
  * @param cb the callback to be invoked when the buffer's contents change
  * @param cb_data argument to be passed to the `cb` callback when called
  */
-void bfy_buffer_set_changed_cb(bfy_buffer* buf, bfy_changed_cb* cb, void* cb_data);
+void bfy_buffer_set_changed_cb(bfy_buffer* buf,
+                               bfy_changed_cb* cb,
+                               void* cb_data);
 
 /**
  * Begin coalescing change events.

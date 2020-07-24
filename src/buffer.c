@@ -1,6 +1,6 @@
 /*
  * Copyright 2020 Mnemosyne LLC
- * 
+ *
  * Permission is hereby granted, free of charge, to any person obtaining
  * a copy of this software and associated documentation files (the
  * "Software"), to deal in the Software without restriction, including
@@ -8,10 +8,10 @@
  * distribute, sublicense, and/or sell copies of the Software, and to
  * permit persons to whom the Software is furnished to do so, subject to
  * the following conditions:
- * 
+ *
  * The above copyright notice and this permission notice shall be
  * included in all copies or substantial portions of the Software.
- * 
+ *
  * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND,
  * EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
  * MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.
@@ -48,6 +48,22 @@ size_t_min(size_t a, size_t b) {
     return a < b ? a : b;
 }
 
+struct bfy_pos {
+    /* Which page this position is in. */
+    size_t page_idx;
+
+    /* Offset into the page.
+       This is relative to page.read_pos, so the memory location
+       would be bfy_page.data + bfy_page.read_pos + pos.page_pos */
+    size_t page_pos;
+
+    /* The offset inside the buffer's content as if it were
+       all contiguous, [0..bfy_buffer.contents_len).
+       When used as an iterator, can also equal bfy_buffer.contents_len
+       to indicate end-of-buffer. */
+    size_t content_pos;
+};
+
 /// page utils
 
 static struct bfy_page const InitPage = { 0 };
@@ -63,6 +79,10 @@ pages_cbegin(bfy_buffer const* const buf) {
 static struct bfy_page const*
 pages_cend(bfy_buffer const* const buf) {
     return buf->pages == NULL ? &buf->page + 1 : buf->pages + buf->n_pages;
+}
+static size_t
+buffer_count_pages(bfy_buffer const* buf) {
+    return pages_cend(buf) - pages_cbegin(buf);
 }
 static struct bfy_page*
 pages_back(bfy_buffer* const buf) {
@@ -106,6 +126,97 @@ page_get_content_len(struct bfy_page const* const page) {
 static size_t
 page_get_space_len(struct bfy_page const* const page) {
     return page->size - page->write_pos;
+}
+
+/// iov
+
+static struct bfy_iovec
+page_peek_content(struct bfy_page const* const page) {
+    struct bfy_iovec const io = {
+        .iov_base = (void*) page_read_cbegin(page),
+        .iov_len = page_get_content_len(page)
+    };
+    return io;
+}
+
+static struct bfy_iovec
+iov_drain(struct bfy_iovec io, size_t len) {
+    len = size_t_min(len, io.iov_len);
+    io.iov_base = (char*)io.iov_base + len;
+    io.iov_len -= len;
+    return io;
+}
+
+/// content iterator
+
+struct bfy_iter {
+    struct bfy_buffer* buf;
+    struct bfy_pos cur;
+    struct bfy_iovec io;
+    struct bfy_pos end;
+};
+
+static struct bfy_iovec page_peek_content(struct bfy_page const* const page);
+
+static void
+iter_impl_set_io(struct bfy_iter* const iter) {
+    struct bfy_page const* page = pages_cbegin(iter->buf) + iter->cur.page_idx;
+    iter->io = iov_drain(page_peek_content(page), iter->cur.page_pos);
+    iter->io.iov_len = size_t_min(iter->io.iov_len, iter->end.content_pos - iter->cur.content_pos);
+}
+
+static bool
+iter_begin(struct bfy_iter* const iter,
+           struct bfy_buffer const* const buf,
+           struct bfy_pos begin,
+           struct bfy_pos end) {
+    struct bfy_iter init = {
+        .buf = (void*) buf,
+        .cur = begin,
+        .end = end
+    };
+    if (init.cur.content_pos >= init.end.content_pos) {
+        return false;
+    }
+
+    *iter = init;
+    iter_impl_set_io(iter);
+    return true;
+}
+
+static bool
+iter_next_page(struct bfy_iter* const iter) {
+    struct bfy_pos next = {
+       .page_idx = iter->cur.page_idx + 1,
+       .page_pos = 0,
+       .content_pos = iter->cur.content_pos + iter->io.iov_len
+    };
+    if (next.page_idx >= buffer_count_pages(iter->buf)) {
+        iter->cur = iter->end;
+        return false;
+    }
+    if (next.content_pos >= iter->end.content_pos) {
+        iter->cur = iter->end;
+        return false;
+    }
+
+    iter->cur = next;
+    iter_impl_set_io(iter);
+    return true;
+}
+
+static bool
+iter_advance_n_bytes(struct bfy_iter* const iter, size_t n) {
+    while (iter->io.iov_len < n) { // make sure we're on the right page
+        n -= iter->io.iov_len;
+        if (!iter_next_page(iter)) {
+            return false;
+        }
+    }
+    iter->io = iov_drain(iter->io, n);
+    iter->cur.page_pos += n;
+    iter->cur.content_pos += n;
+    return true;
 }
 
 ///  change notifications
@@ -255,13 +366,12 @@ page_release(struct bfy_page* page) {
 
 /// some simple getters
 
-static size_t
-buffer_count_pages(bfy_buffer const* buf) {
-    return pages_cend(buf) - pages_cbegin(buf);
-}
-
 static struct bfy_pos
 buffer_get_pos(bfy_buffer const* buf, size_t content_pos) {
+    if (content_pos == 0) {
+        struct bfy_pos const begin = { 0 };
+        return begin;
+    }
     if (content_pos >= buf->content_len) {
         struct bfy_pos const end = {
             .page_idx = buffer_count_pages(buf),
@@ -278,9 +388,6 @@ buffer_get_pos(bfy_buffer const* buf, size_t content_pos) {
     for (it = begin; it != end; ++it) {
         size_t const page_len = page_get_content_len(it);
         size_t const got = size_t_min(page_len, content_pos);
-        if (got == 0) {
-            break;
-        }
         ret.content_pos += got;
         content_pos -= got;
         if ((content_pos == 0) && (page_len > got)) {
@@ -306,59 +413,34 @@ bfy_buffer_get_space_len(bfy_buffer const* buf) {
 
 /// peek
 
-static struct bfy_iovec
-page_peek_content(struct bfy_page const* const page) {
-    struct bfy_iovec const io = {
-        .iov_base = (void*) page_read_cbegin(page),
-        .iov_len = page_get_content_len(page)
-    };
-    return io;
-}
-
-static struct bfy_iovec
-iov_drain(struct bfy_iovec io, size_t len) {
-    len = size_t_min(len, io.iov_len);
-    io.iov_base = (char*)io.iov_base + len;
-    io.iov_len -= len;
-    return io;
-}
-
 size_t
-bfy_buffer_peek(bfy_buffer const* buf,
-                size_t begin_at, size_t end_at,
-                struct bfy_iovec* vec, size_t n_vec) {
+bfy_buffer_peek_range(bfy_buffer const* buf,
+                      size_t begin_at, size_t end_at,
+                      struct bfy_iovec* vec, size_t n_vec) {
     size_t needed = 0;
     struct bfy_iovec const* const vec_end = vec + n_vec;
 
-    struct bfy_pos const begin_pos = buffer_get_pos(buf, begin_at);
-    struct bfy_pos const end_pos = buffer_get_pos(buf, end_at);
-    struct bfy_page const* const first_page = pages_cbegin(buf) + begin_pos.page_idx;
-    struct bfy_page const* const last_page = pages_cbegin(buf) + end_pos.page_idx;
-    for (struct bfy_page const* it = first_page; it <= last_page; ++it) {
-        struct bfy_iovec io = page_peek_content(it);
-        if (it == last_page) {
-            // maybe [begin..end) omits the back of the last page
-            io.iov_len = end_pos.page_pos;
+    struct bfy_iter iter;
+    if (iter_begin(&iter, buf, buffer_get_pos(buf, begin_at), buffer_get_pos(buf, end_at))) do {
+        ++needed;
+        if (vec < vec_end) {
+            *vec++ = iter.io;
         }
-        if (it == first_page) {
-            // maybe [begin..end) omits the front of the first page
-            io = iov_drain(io, begin_pos.page_pos);
-        }
-        if (io.iov_len > 0) {
-            ++needed;
-            if (vec < vec_end) {
-                *vec++ = io;
-            }
-        }
-    }
+    } while (iter_next_page(&iter));
 
     return needed;
 }
 
 size_t
+bfy_buffer_peek(bfy_buffer const* buf, size_t len,
+                struct bfy_iovec* vec_out, size_t n_vec) {
+    return bfy_buffer_peek_range(buf, 0, len, vec_out, n_vec);
+}
+
+size_t
 bfy_buffer_peek_all(bfy_buffer const* buf,
                     struct bfy_iovec* vec_out, size_t n_vec) {
-    return bfy_buffer_peek(buf, 0, SIZE_MAX, vec_out, n_vec);
+    return bfy_buffer_peek(buf, SIZE_MAX, vec_out, n_vec);
 }
 
 /// adding pages
@@ -395,7 +477,7 @@ buffer_insert_pages(bfy_buffer* buf, size_t pos,
 
     // if we had 1 page and are inserting more, handle the special case
     // of moving the single buf->page into the multipage array
-    if (buf->n_pages == 0 && buf->pages != NULL && buf->page.data != NULL) {
+    if (buf->n_pages == 0 && buf->page.data != NULL) {
         buf->n_pages = 1;
         *buf->pages = buf->page;
         buf->page = InitPage;
@@ -550,7 +632,7 @@ bfy_buffer_add_readonly(bfy_buffer* buf, const void* data, size_t len) {
 
 int
 bfy_buffer_add_reference(bfy_buffer* buf,
-                         const void* data, size_t len, 
+                         const void* data, size_t len,
                          bfy_unref_cb* cb, void* unref_arg) {
     struct bfy_page const page = {
         .data = (void*) data,
@@ -673,106 +755,110 @@ enum {
 };
 
 static size_t
-buffer_drain_all(bfy_buffer* buf, int flags) {
+buffer_drain_range(bfy_buffer* const buf,
+                   struct bfy_pos begin,
+                   struct bfy_pos end,
+                   int flags) {
     bool const do_release = (flags & DRAIN_FLAG_NORELEASE) == 0;
     bool const do_recycle = (flags & DRAIN_FLAG_NORECYCLE) == 0;
-    size_t const drained = bfy_buffer_get_content_len(buf);
+    size_t n_drained = 0;
 
-    struct bfy_page recycle_me = InitPage;
-
-    struct bfy_page* it = pages_begin(buf);
-    struct bfy_page const* const end = pages_cend(buf);
-    for ( ; it != end; ++it) {
-        if (do_recycle && page_is_recyclable(it) && it->size > recycle_me.size) {
-            if (do_release) {
-                page_release(&recycle_me);
+    struct bfy_iter iter;
+    if (iter_begin(&iter, buf, begin, end)) do {
+        struct bfy_page* const page = pages_begin(buf) + iter.cur.page_idx;
+        size_t const content_len = page_get_content_len(page);
+        char const* iov_end = (char const*)iter.io.iov_base + iter.io.iov_len;
+        if (iter.io.iov_len >= content_len) {
+            // drain the whole page
+            n_drained += content_len;
+            if (do_recycle && page_is_recyclable(page)) {
+                page->read_pos = page->write_pos = 0;
+            } else if (do_release) {
+                page_release(page);
+            } else {
+                *page = InitPage;
             }
-            recycle_me = *it;
-            recycle_me.read_pos = recycle_me.write_pos = 0;
+        } else if (iter.io.iov_base == page_read_cbegin(page)) {
+            // drain from the front of the page
+            page->read_pos += iter.io.iov_len;
+            n_drained += iter.io.iov_len;
+        } else if (iov_end == page_write_cbegin(page)) {
+            // drain from the end of the page
+            page->write_pos -= iter.io.iov_len;
+            n_drained += iter.io.iov_len;
         } else {
-            if (do_release) {
-                page_release(it);
+            // drain from the middle of the page
+            if (page_is_writable(page)) {
+                size_t const n_bytes = (char const*)page_write_cbegin(page) - iov_end;
+                memmove(iter.io.iov_base, iov_end, n_bytes);
+                page->write_pos -= n_bytes;
+            } else {
+                // FIXME
+                abort();
             }
         }
+    } while (iter_next_page(&iter));
+
+    // remove dead pages
+    // maybe recycle a page
+    if (buffer_count_pages(buf) > 0) {
+        struct bfy_page* keep = pages_begin(buf);
+        struct bfy_page const* const end = pages_cend(buf);
+        struct bfy_page recycle = InitPage;
+        for (struct bfy_page* walk = keep; walk != end; ++walk) {
+            if (page_get_content_len(walk) > 0) {
+                *keep++ = *walk;
+            } else if (do_recycle && page_is_recyclable(walk) && walk->size > recycle.size) {
+                if (do_release) {
+                    page_release(&recycle);
+                }
+                recycle = *walk;
+            } else if (do_release) {
+                page_release(walk);
+            }
+        }
+        if (recycle.size > 0) {
+            *keep++ = recycle;
+        }
+        buf->n_pages = keep - pages_cbegin(buf);
     }
 
-    allocator.free(buf->pages);
-    buf->pages = NULL;
-    buf->n_pages = 0;
-    buf->n_pages_alloc = 0;
-    buf->page = recycle_me;
-    buffer_record_content_removed(buf, buf->content_len);
+    // if we've drained everything, remove the page containers
+    if (buf->n_pages == 0 && buf->pages != NULL) {
+        allocator.free(buf->pages);
+        buf->pages = NULL;
+        buf->n_pages_alloc = 0;
+    }
 
-    return drained;
+    assert(n_drained == (end.content_pos - begin.content_pos));
+    buffer_record_content_removed(buf, n_drained);
+    return n_drained;
+}
+
+size_t
+bfy_buffer_drain_range(bfy_buffer* buf, size_t begin, size_t end) {
+    return buffer_drain_range(buf,
+                              buffer_get_pos(buf, begin),
+                              buffer_get_pos(buf, end),
+                              0);
+}
+
+size_t
+bfy_buffer_drain(bfy_buffer* buf, size_t len) {
+    return bfy_buffer_drain_range(buf, 0, len);
+}
+
+static size_t
+buffer_drain_all(bfy_buffer* const buf, int flags) {
+    return buffer_drain_range(buf,
+                              buffer_get_pos(buf, 0),
+                              buffer_get_pos(buf, SIZE_MAX),
+                              flags);
 }
 
 size_t
 bfy_buffer_drain_all(bfy_buffer* buf) {
-    return buffer_drain_all(buf, 0);
-}
-
-static void
-buffer_forget_first_n_pages(bfy_buffer* buf, size_t len) {
-    len = size_t_min(len, buffer_count_pages(buf));
-    struct bfy_page* const begin = pages_begin(buf);
-
-    for (struct bfy_page* it=begin, *const end=it + len; it != end; ++it) {
-        *it = InitPage;
-    }
-
-    if (buf->pages != NULL) {
-        struct bfy_page const* const end = pages_cend(buf);
-        if (begin + len < end) {
-            const size_t pagesize = sizeof(struct bfy_page);
-            memmove(begin, begin + len, pagesize * (end - begin - len));
-            buf->n_pages -= len;
-        } else {
-            allocator.free(buf->pages);
-            buf->pages = NULL;
-            buf->n_pages = 0;
-            buf->n_pages_alloc = 0;
-        }
-    }
-}
-
-static void
-buffer_release_first_n_pages(bfy_buffer* buf, size_t n) {
-    n = size_t_min(n, buffer_count_pages(buf));
-
-    struct bfy_page * it = pages_begin(buf);
-    struct bfy_page const* const end = it + n;
-    for ( ; it != end; ++it) {
-        page_release(it);
-    }
-}
-
-static size_t
-buffer_drain(bfy_buffer* const buf, struct bfy_pos pos, int flags) {
-    if (pos.content_pos >= buf->content_len) {
-        return buffer_drain_all(buf, flags);
-    }
-
-    if (pos.page_idx > 0) {
-        bool const do_release = (flags & DRAIN_FLAG_NORELEASE) == 0;
-        if (do_release) {
-            buffer_release_first_n_pages(buf, pos.page_idx);
-        }
-        buffer_forget_first_n_pages(buf, pos.page_idx);
-    }
-    if (pos.page_pos > 0) {
-        struct bfy_page* page = pages_begin(buf);
-        page->read_pos += pos.page_pos;
-        assert(page->read_pos <= page->write_pos);
-    }
-
-    size_t const drained = pos.content_pos;
-    buffer_record_content_removed(buf, drained);
-    return drained;
-}
-
-size_t
-bfy_buffer_drain(bfy_buffer* buf, size_t wanted) {
-    return buffer_drain(buf, buffer_get_pos(buf, wanted), 0);
+    return bfy_buffer_drain_range(buf, 0, SIZE_MAX);
 }
 
 /// copyout
@@ -784,25 +870,11 @@ buffer_copyout(bfy_buffer const* buf,
                void* setme) {
     char* tgt = setme;
 
-    struct bfy_page const* const first_page = pages_cbegin(buf) + begin.page_idx;
-    struct bfy_page const* const last_page = pages_cbegin(buf) + end.page_idx;
-    for (struct bfy_page const* page = first_page; page <= last_page; ++page) {
-        if (page == last_page && end.page_pos == 0) {
-            // end-of-pages reached
-            break;
-        }
-        struct bfy_iovec io = page_peek_content(page);
-        if (page == last_page) {
-            // maybe [begin..end) omits the back of the last page
-            io.iov_len = size_t_min(io.iov_len, end.page_pos);
-        }
-        if (page == first_page) {
-            // maybe [begin..end) omits the front of the first page
-            io = iov_drain(io, begin.page_pos);
-        }
-        memcpy(tgt, io.iov_base, io.iov_len);
-        tgt += io.iov_len;
-    }
+    struct bfy_iter iter;
+    if (iter_begin(&iter, buf, begin, end)) do {
+        memcpy(tgt, iter.io.iov_base, iter.io.iov_len);
+        tgt += iter.io.iov_len;
+    } while (iter_next_page(&iter));
 
     size_t const copied_len = tgt - (const char*)setme;
     assert(copied_len == (end.content_pos - begin.content_pos));
@@ -810,28 +882,39 @@ buffer_copyout(bfy_buffer const* buf,
 }
 
 size_t
-bfy_buffer_copyout(bfy_buffer const* buf, size_t begin, size_t end, void* setme) {
+bfy_buffer_copyout_range(bfy_buffer const* buf,
+                         size_t begin, size_t end,
+                         void* setme) {
     return buffer_copyout(buf,
                           buffer_get_pos(buf, begin),
                           buffer_get_pos(buf, end),
                           setme);
 }
+size_t
+bfy_buffer_copyout(bfy_buffer const* buf, size_t len, void* setme) {
+    return bfy_buffer_copyout_range(buf, 0, len, setme);
+}
 
 /// remove
 
 static size_t
-buffer_remove(bfy_buffer* buf, struct bfy_pos end, void* data) {
-    size_t const n_copied = buffer_copyout(buf, buffer_get_pos(buf, 0), end, data);
-    size_t const n_drained = buffer_drain(buf, end, 0);
-    assert(n_copied == n_drained);
+buffer_remove(bfy_buffer* buf, struct bfy_pos begin, struct bfy_pos end, void* data) {
+    size_t const n_copied = buffer_copyout(buf, begin, end, data);
+    buffer_drain_range(buf, begin, end, 0);
     return n_copied;
 }
 
 size_t
-bfy_buffer_remove(bfy_buffer* buf, size_t wanted, void* setme) {
+bfy_buffer_remove_range(bfy_buffer* buf, size_t begin, size_t end, void* setme) {
     return buffer_remove(buf,
-                         buffer_get_pos(buf, wanted),
+                         buffer_get_pos(buf, begin),
+                         buffer_get_pos(buf, end),
                          setme);
+}
+
+size_t
+bfy_buffer_remove(bfy_buffer* buf, size_t len, void* setme) {
+    return bfy_buffer_remove_range(buf, 0, len, setme);
 }
 
 static void*
@@ -850,6 +933,7 @@ bfy_buffer_peek_string(bfy_buffer* buf, size_t* setme_len) {
     bfy_buffer_make_all_contiguous(buf);
     struct bfy_page* page = pages_begin(buf);
     page->write_pos -= sizeof(nul);
+    buffer_record_content_removed(buf, sizeof(nul));
     bfy_buffer_unmute_change_events(buf);
 
     if (setme_len != NULL) {
@@ -883,12 +967,14 @@ bfy_buffer_remove_string(bfy_buffer* buf, size_t* setme_len) {
 
     if (ret == NULL) {
         // Plan B: build a new string
-        struct bfy_pos const pos = buffer_get_pos(buf, SIZE_MAX);
+        struct bfy_pos const begin = buffer_get_pos(buf, 0);
+        struct bfy_pos const end = buffer_get_pos(buf, SIZE_MAX);
+        size_t const wanted = end.content_pos - begin.content_pos;
         size_t moved_len = 0;
-        ret = allocator.malloc(pos.content_pos);
+        ret = allocator.malloc(wanted);
         if (ret != NULL) {
-            moved_len = buffer_remove(buf, pos, ret);
-            assert(moved_len == pos.content_pos);
+            moved_len = buffer_remove(buf, begin, end, ret);
+            assert(moved_len == wanted);
         }
     }
 
@@ -955,7 +1041,7 @@ bfy_buffer_remove_buffer(bfy_buffer* buf, size_t wanted, bfy_buffer* tgt) {
         bfy_buffer_add(tgt, page_read_cbegin(page), end.page_pos);
     }
 
-    return buffer_drain(buf, end, DRAIN_FLAG_NORECYCLE | DRAIN_FLAG_NORELEASE);
+    return buffer_drain_range(buf, buffer_get_pos(buf, 0), end, DRAIN_FLAG_NORECYCLE | DRAIN_FLAG_NORELEASE);
 }
 
 // make_contiguous
@@ -980,7 +1066,7 @@ bfy_buffer_make_contiguous(bfy_buffer* buf, size_t wanted) {
     } else {
         // make some new free space, use it, and prepend it
         int8_t* data = allocator.malloc(pos.content_pos);
-        size_t const n_moved = buffer_remove(buf, pos, data);
+        size_t const n_moved = buffer_remove(buf, buffer_get_pos(buf, 0), pos, data);
         struct bfy_page const newpage = {
             .data = data,
             .size = n_moved,
@@ -1000,57 +1086,26 @@ bfy_buffer_make_all_contiguous(bfy_buffer* buf) {
 
 /// search
 
-static struct bfy_iovec
-buffer_peek_content_at_pos(bfy_buffer const* buf, struct bfy_pos pos) {
-    struct bfy_page const* const page = pages_cbegin(buf) + pos.page_idx;
-    return iov_drain(page_peek_content(page), pos.page_pos);
-}
-
-static struct bfy_pos
-buffer_pos_inc(bfy_buffer const* buf, struct bfy_pos const pos, size_t inc) {
-
-    struct bfy_page const* const page = pages_cbegin(buf) + pos.page_idx;
-
-    if (page_get_content_len(page) > (pos.page_pos + inc)) {
-        struct bfy_pos const ret = {
-            .page_idx = pos.page_idx,
-            .page_pos = pos.page_pos + inc,
-            .content_pos = pos.content_pos + inc
-        };
-        return ret;
-    }
-
-    return buffer_get_pos(buf, pos.content_pos + inc);
-}
-
-static struct bfy_pos
-buffer_pos_next_page(bfy_buffer const* buf, struct bfy_pos const pos) {
-    struct bfy_page const* const page = pages_cbegin(buf) + pos.page_idx;
-    struct bfy_pos const ret = {
-        .page_idx = size_t_min(pos.page_idx + 1, buffer_count_pages(buf)),
-        .page_pos = 0,
-        .content_pos = pos.content_pos + (page_get_content_len(page) - pos.page_pos)
-    };
-    return ret;
-}
-
 static bool
-buffer_contains_at(bfy_buffer const* buf, struct bfy_pos at,
+buffer_contains_at(bfy_buffer const* buf, struct bfy_iter it,
                    void const* needle, size_t needle_len) {
-    struct bfy_iovec const io = buffer_peek_content_at_pos(buf, at);
-    if (io.iov_len == 0) {
+    if (it.io.iov_len == 0) {
         return false;
     }
-    if (io.iov_len >= needle_len) {
-        return memcmp(io.iov_base, needle, needle_len) == 0;
+    if (it.io.iov_len >= needle_len) {
+        return memcmp(it.io.iov_base, needle, needle_len) == 0;
     }
-    if (memcmp(io.iov_base, needle, io.iov_len) != 0) {
+    if (memcmp(it.io.iov_base, needle, it.io.iov_len) != 0) {
+        return false;
+    }
+
+    needle = (char const*)needle + it.io.iov_len;
+    needle_len -= it.io.iov_len;
+    if (!iter_next_page(&it)) {
         return false;
     }
     // FIXME: recursive function could be smashed
-    return buffer_contains_at(buf, buffer_pos_next_page(buf, at),
-                              (char const*)needle + io.iov_len,
-                              needle_len - io.iov_len);
+    return buffer_contains_at(buf, it, needle, needle_len);
 }
 
 static size_t
@@ -1071,46 +1126,63 @@ buffer_search_iovec(struct bfy_iovec const io,
 }
 
 static int
-buffer_search(bfy_buffer const* buf,
-              struct bfy_pos begin, struct bfy_pos end,
-              void const* needle, size_t needle_len,
-              size_t* setme) {
-    struct bfy_pos walk = begin;
-    while (walk.content_pos + needle_len <= end.content_pos) {
-        struct bfy_iovec const io = buffer_peek_content_at_pos(buf, walk);
-        size_t const hit = buffer_search_iovec(io, needle, needle_len);
-        if (hit < io.iov_len) {
-            // maybe got a match?
-            struct bfy_pos test = buffer_pos_inc(buf, walk, hit);
-            if (buffer_contains_at(buf, test, needle, needle_len)) {
-                *setme = test.content_pos;
-                return 0;
-            }
-            walk = buffer_pos_inc(buf, walk, hit + 1);
-            continue;
-        }
-        walk = buffer_pos_next_page(buf, walk);
+buffer_search_range(bfy_buffer const* buf,
+                    struct bfy_pos begin, struct bfy_pos end,
+                    void const* needle, size_t needle_len,
+                    size_t* setme) {
+    struct bfy_iter iter;
+
+    if (!iter_begin(&iter, buf, begin, end)) {
+        return -1;
+    }
+    while (iter.cur.content_pos < end.content_pos) {
+      size_t const hit = buffer_search_iovec(iter.io, needle, needle_len);
+      if (hit == iter.io.iov_len) {
+          if (iter_next_page(&iter)) {
+              continue;
+          }
+          break;
+      }
+      if (!iter_advance_n_bytes(&iter, hit)) {
+          break;
+      }
+      if (buffer_contains_at(buf, iter, needle, needle_len)) {
+          *setme = iter.cur.content_pos;
+          return 0;
+      }
+      if (!iter_advance_n_bytes(&iter, 1)) {
+          break;
+      }
     }
 
     return -1;
 }
 
 int
-bfy_buffer_search(bfy_buffer const* buf,
-                  size_t begin, size_t end,
+bfy_buffer_search_range(bfy_buffer const* buf,
+                        size_t begin, size_t end,
+                        void const* needle, size_t needle_len,
+                        size_t* setme_match) {
+    return buffer_search_range(buf,
+                               buffer_get_pos(buf, begin),
+                               buffer_get_pos(buf, end),
+                               needle, needle_len, setme_match);
+}
+
+int
+bfy_buffer_search(bfy_buffer const* buf, size_t len,
                   void const* needle, size_t needle_len,
                   size_t* setme_match) {
-    return buffer_search(buf,
-                         buffer_get_pos(buf, begin),
-                         buffer_get_pos(buf, end),
-                         needle, needle_len, setme_match);
+    return bfy_buffer_search_range(buf, 0, len,
+                                   needle, needle_len, setme_match);
 }
 
 int
 bfy_buffer_search_all(bfy_buffer const* buf,
                       void const* needle, size_t needle_len,
                       size_t* setme_match) {
-    return bfy_buffer_search(buf, 0, SIZE_MAX, needle, needle_len, setme_match);
+    return bfy_buffer_search_range(buf, 0, SIZE_MAX,
+                                   needle, needle_len, setme_match);
 }
 
 /// life cycle

@@ -113,7 +113,9 @@ is called.
 ## Removing Data
 
 ```c
-size_t bfy_buffer_remove(bfy_buffer* buf, void* setme, size_t len);
+size_t bfy_buffer_remove_range(bfy_buffer* buf, size_t begin, size_t end, void* setme);
+size_t bfy_buffer_remove(bfy_buffer* buf, size_t len, void* setme);
+
 char* bfy_buffer_remove_string(bfy_buffer* buf, size_t* len);
 int bfy_buffer_remove_ntoh_u8 (bfy_buffer* buf, uint8_t* setme);
 int bfy_buffer_remove_ntoh_u16(bfy_buffer* buf, uint16_t* setme);
@@ -121,16 +123,16 @@ int bfy_buffer_remove_ntoh_u32(bfy_buffer* buf, uint32_t* setme);
 int bfy_buffer_remove_ntoh_u64(bfy_buffer* buf, uint64_t* setme);
 ```
 
-Of these functions, `bfy_buffer_remove()` is the key: it moves the
-next `len` bytes of content from the front of the buffer to the
-specified location and returns the number of bytes consumed. Just as
-content is added with `bfy_buffer_add*()`, it is consumed with
-`bfy_buffer_remove*()`.
+`bfy_buffer_remove_range()` moves the [begin..end) subset of all
+the buffer's content from the buffer into `setme` and returns the
+number of bytes moved. `bfy_buffer_remove()` is a convenience helper
+to remove the buffer's first `len` bytes. Just as content is added
+with `bfy_buffer_add*()`, it is consumed with `bfy_buffer_remove*()`.
 
-The others are convenience wrappers: `bfy_buffer_remove_ntoh*()` read
-numbers from big-endian network byte order into the host machine's
-byte order, and `bfy_buffer_remove_string()` will remove the buffer
-into a newly-allocated string.
+The others are also helpers: `bfy_buffer_remove_ntoh*()` read numbers
+from big-endian network byte order into the host machine's byte order,
+and `bfy_buffer_remove_string()` will remove the buffer into a
+newly-allocated string.
 
 ```c
 int bfy_buffer_remove_buffer(bfy_buffer* buf, bfy_buffer* tgt, size_t len);
@@ -141,31 +143,47 @@ the target buffer. Unnecessary memory copying is avoided as much as
 possible.
 
 ```c
+size_t bfy_buffer_drain_range(bfy_buffer* buf, size_t begin, size_t end);
 size_t bfy_buffer_drain(bfy_buffer* buf, size_t len);
 size_t bfy_buffer_drain_all(bfy_buffer* buf);
-size_t bfy_buffer_copyout(bfy_buffer const* buf, void* vdata, size_t len);
 ```
 
-`bfy_buffer_drain()` and `bfy_buffer_drain_all()` remove content from
-the buffer without copying it first. `bfy_buffer_copyout()` copies data
-from the buffer without draining it afterwards.
+`bfy_buffer_drain_range()` removes the [begin..end) subset of the
+buffer's content without copying it first. `bfy_buffer_drain_all()`
+and `bfy_buffer_drain()` are convenience helpers that drain the entire
+buffer or its first `len` bytes, respectively.
+
+```c
+size_t bfy_buffer_copyout_range(bfy_buffer const* buf, size_t begin, size_t end, void* setme);
+size_t bfy_buffer_copyout(bfy_buffer const* buf, size_t len, void* setme);
+```
+
+`bfy_buffer_copyout_range()` copies the [begin..end) subset of the
+buffer's contents into the provided `setme` buffer. `bfy_buffer_copyout()`
+is a convenience helper that copies the buffer's first `len` bytes.
 
 ## Searching
 
 ```c
-int bfy_buffer_search(bfy_buffer const* buf,
-                      void const* needle, size_t needle_len,
-                      size_t* match);
-
 int bfy_buffer_search_range(bfy_buffer const* buf,
                             size_t begin, size_t end,
                             void const* needle, size_t needle_len,
                             size_t* match);
+
+int bfy_buffer_search_all(bfy_buffer const* buf,
+                          void const* needle, size_t needle_len,
+                          size_t* match);
+
+int bfy_buffer_search(bfy_buffer const* buf, size_t len,
+                          void const* needle, size_t needle_len,
+                          size_t* match);
+
 ```
 
 `bfy_buffer_search_range()` searches for a string inside the [begin..end)
-subset of the buffer's content. `bfy_buffer_search()` searches the entire
-buffer, equivalent to `bfy_buffer_search_range(buf, 0, SIZE_MAX, ...)`
+subset of the buffer's content. `bfy_buffer_search_all()` and
+`bfy_buffer_search()` are convenience helpers that search the entire
+buffer or its first `len` bytes, respectively.
 
 ## Efficient Memory Management
 

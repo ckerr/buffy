@@ -91,22 +91,6 @@ struct bfy_buffer {
     int changed_muted;
 };
 
-struct bfy_pos {
-    /* Which page this position is in. */
-    size_t page_idx;
-
-    /* Offset into the page.
-       This is relative to page.read_pos, so the memory location
-       would be bfy_page.data + bfy_page.read_pos + pos.page_pos */
-    size_t page_pos;
-
-    /* The offset inside the buffer's content as if it were
-       all contiguous, [0..bfy_buffer.contents_len).
-       When used as an iterator, can also equal bfy_buffer.contents_len
-       to indicate end-of-buffer. */
-    size_t content_pos;
-};
-
 void bfy_buffer_mute_change_events(struct bfy_buffer* buf);
 
 void bfy_buffer_unmute_change_events(struct bfy_buffer* buf);
