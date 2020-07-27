@@ -444,7 +444,7 @@ TEST(Buffer, make_contiguous_when_small_request) {
     auto const action = [&buf](auto const& str){bfy_buffer_add_readonly(&buf, std::data(str), std::size(str));};
     std::for_each(begin, end, action);
     auto const n_readable = bfy_buffer_get_content_len(&buf);
-    auto const acc = [](auto const& acc, auto const& str){return acc + std::size(str);};
+    auto const acc = [](auto const& a, auto const& b){return a + std::size(b);};
     auto const n_expected_readable = std::accumulate(begin, end, size_t{}, acc);
     EXPECT_EQ(n_pages_in, buffer_count_pages(&buf));
     EXPECT_EQ(n_expected_readable, n_readable);
